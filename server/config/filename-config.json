@@ -1,0 +1,4 @@
+{
+  "pattern": "{order_number}",
+  "extension": ".txt"
+}

@@ -1,0 +1,49 @@
+{
+  "basePath": "C:\\SportslinePhotos\\Specialty",
+  "products": [
+    {
+      "externalId": "14",
+      "productName": "Photo Statuette - 5x7",
+      "subfolder": "Photo Statuette - 5x7"
+    },
+    {
+      "externalId": "26",
+      "productName": "Acrylic Ornament 3.5x5",
+      "subfolder": "Acrylic Ornament 3.5x5"
+    },
+    {
+      "externalId": "7",
+      "productName": "Key Chain",
+      "subfolder": "Key Chain"
+    },
+    {
+      "externalId": "18",
+      "productName": "Bagtag",
+      "subfolder": "Bagtag"
+    },
+    {
+      "externalId": "19",
+      "productName": "Mouse Pad",
+      "subfolder": "Mouse Pad"
+    },
+    {
+      "externalId": "20",
+      "productName": "Coffee Mug",
+      "subfolder": "Coffee Mug"
+    },
+    {
+      "externalId": "38",
+      "productName": "Mouse Pad - Team ",
+      "subfolder": "Mouse Pad - Team "
+    },
+    {
+      "externalId": "37",
+      "productName": "Coffee Mug - Team",
+      "subfolder": "Coffee Mug - Team"
+    }
+  ],
+  "highlightColors": {
+    "specialty": "#ffeaa3",
+    "quantity": "#a8ffbd"
+  }
+}

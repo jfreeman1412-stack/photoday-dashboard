@@ -1,0 +1,8 @@
+node_modules/
+.env
+client/build/
+downloads/
+output/
+*.log
+.DS_Store
+server/config/orders-db.json

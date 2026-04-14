@@ -1,0 +1,54 @@
+{
+  "mappings": [
+    {
+      "externalId": "6",
+      "size": "8x10",
+      "productName": "8x10 Memory Mate"
+    },
+    {
+      "externalId": "17",
+      "size": "5x8",
+      "productName": "4 Mini Magnets"
+    },
+    {
+      "externalId": "12",
+      "size": "8x10",
+      "productName": "8 Wallets"
+    },
+    {
+      "externalId": "8",
+      "size": "8x10",
+      "productName": "8x10 Player Photo"
+    },
+    {
+      "externalId": "9",
+      "size": "10x8",
+      "productName": "8x10 Team Photo"
+    },
+    {
+      "externalId": "10",
+      "size": "5x7",
+      "productName": "5x7 Player Photo"
+    },
+    {
+      "externalId": "11",
+      "size": "7x5",
+      "productName": "5x7 Team Photo"
+    },
+    {
+      "externalId": "13",
+      "size": "5x8",
+      "productName": "Trading Cards"
+    },
+    {
+      "externalId": "15",
+      "size": "5x8",
+      "productName": "2 Magnets"
+    },
+    {
+      "externalId": "16",
+      "size": "4x6",
+      "productName": "Button"
+    }
+  ]
+}

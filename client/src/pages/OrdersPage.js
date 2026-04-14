@@ -1,0 +1,690 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import api from '../services/api';
+
+const INTERVAL_OPTIONS = [
+  { value: 5, label: '5 minutes' },
+  { value: 10, label: '10 minutes' },
+  { value: 15, label: '15 minutes' },
+  { value: 20, label: '20 minutes' },
+  { value: 30, label: '30 minutes' },
+  { value: 60, label: '1 hour' },
+];
+
+export default function OrdersPage() {
+  const [activeTab, setActiveTab] = useState('unprocessed');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  // Orders by status
+  const [unprocessedOrders, setUnprocessedOrders] = useState([]);
+  const [processedOrders, setProcessedOrders] = useState([]);
+  const [shippedOrders, setShippedOrders] = useState([]);
+  const [counts, setCounts] = useState({ unprocessed: 0, processed: 0, shipped: 0, total: 0 });
+
+  // Gallery filter
+  const [galleryFilter, setGalleryFilter] = useState('all');
+
+  // Folder sort
+  const [folderSort, setFolderSort] = useState([]);
+  const [sortOptions, setSortOptions] = useState([]);
+
+  // Auto-fetch settings
+  const [autoFetchEnabled, setAutoFetchEnabled] = useState(false);
+  const [autoFetchInterval, setAutoFetchInterval] = useState(30);
+  const [lastFetch, setLastFetch] = useState(null);
+
+  // Process results
+  const [processResults, setProcessResults] = useState(null);
+
+  // Ship form
+  const [shipOrderNum, setShipOrderNum] = useState('');
+  const [shipTrackingNum, setShipTrackingNum] = useState('');
+
+  const clearMessages = () => { setError(null); setSuccess(null); };
+
+  // ─── Derive unique galleries from current tab's orders ──
+  const currentOrders = useMemo(() => {
+    switch (activeTab) {
+      case 'unprocessed': return unprocessedOrders;
+      case 'processed': return processedOrders;
+      case 'shipped': return shippedOrders;
+      default: return [];
+    }
+  }, [activeTab, unprocessedOrders, processedOrders, shippedOrders]);
+
+  const galleries = useMemo(() => {
+    const set = new Set();
+    currentOrders.forEach(o => { if (o.gallery) set.add(o.gallery); });
+    return Array.from(set).sort();
+  }, [currentOrders]);
+
+  // Filter orders by selected gallery
+  const filteredOrders = useMemo(() => {
+    if (galleryFilter === 'all') return currentOrders;
+    return currentOrders.filter(o => o.gallery === galleryFilter);
+  }, [currentOrders, galleryFilter]);
+
+  // Reset gallery filter when switching tabs
+  useEffect(() => { setGalleryFilter('all'); }, [activeTab]);
+
+  // ─── Load Data ──────────────────────────────────────────
+  const loadOrders = useCallback(async (status) => {
+    try {
+      let data;
+      switch (status) {
+        case 'unprocessed': data = await api.getUnprocessedOrders(); setUnprocessedOrders(data.orders); break;
+        case 'processed': data = await api.getProcessedOrders(); setProcessedOrders(data.orders); break;
+        case 'shipped': data = await api.getShippedOrders(); setShippedOrders(data.orders); break;
+        default: break;
+      }
+    } catch (err) { /* silent */ }
+  }, []);
+
+  const loadCounts = useCallback(async () => {
+    try {
+      const data = await api.getOrderCounts();
+      setCounts(prev => {
+        if (data.unprocessed !== prev.unprocessed || data.processed !== prev.processed || data.shipped !== prev.shipped) {
+          setTimeout(() => {
+            loadOrders('unprocessed');
+            loadOrders('processed');
+            loadOrders('shipped');
+          }, 100);
+        }
+        return data;
+      });
+      if (data.autoFetch) {
+        setAutoFetchEnabled(data.autoFetch.enabled);
+        setAutoFetchInterval(data.autoFetch.intervalMinutes);
+        setLastFetch(data.autoFetch.lastFetch);
+      }
+    } catch (err) { /* silent */ }
+  }, [loadOrders]);
+
+  useEffect(() => {
+    loadCounts();
+    loadOrders('unprocessed');
+    loadOrders('processed');
+    loadOrders('shipped');
+    // Load folder sort settings
+    api.getFolderSortOptions().then(setSortOptions).catch(() => {});
+    api.getFolderSort().then(d => setFolderSort(d.sortLevels || [])).catch(() => {});
+    const interval = setInterval(loadCounts, 30000);
+    return () => clearInterval(interval);
+  }, [loadCounts, loadOrders]);
+
+  useEffect(() => {
+    loadOrders(activeTab);
+  }, [activeTab, loadOrders]);
+
+  // ─── Fetch New Orders ───────────────────────────────────
+  const fetchNewOrders = async () => {
+    clearMessages();
+    setLoading(true);
+    try {
+      const result = await api.fetchNewOrders();
+      if (result.skipped) {
+        setSuccess('Fetch already in progress');
+      } else if (result.error) {
+        setError(result.error);
+      } else {
+        setSuccess(`Fetched ${result.fetched} orders from PhotoDay (${result.newOrders} new)`);
+      }
+      await loadCounts();
+      await loadOrders('unprocessed');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Auto-Fetch Toggle ──────────────────────────────────
+  const toggleAutoFetch = async (enabled) => {
+    try {
+      await api.updateAutoFetch(enabled, autoFetchInterval);
+      setAutoFetchEnabled(enabled);
+      setSuccess(enabled ? `Auto-fetch enabled (every ${autoFetchInterval} min)` : 'Auto-fetch disabled');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const updateInterval = async (minutes) => {
+    setAutoFetchInterval(minutes);
+    if (autoFetchEnabled) {
+      try {
+        await api.updateAutoFetch(true, minutes);
+        setSuccess(`Auto-fetch interval updated to ${minutes} minutes`);
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+  };
+
+  // ─── Process Orders ─────────────────────────────────────
+  const processSingle = async (orderNum) => {
+    clearMessages();
+    setLoading(true);
+    try {
+      await api.processOrderByNum(orderNum);
+      setSuccess(`Order ${orderNum} processed successfully`);
+      await loadCounts();
+      await loadOrders('unprocessed');
+      await loadOrders('processed');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const processFiltered = async () => {
+    clearMessages();
+    setLoading(true);
+    try {
+      const options = galleryFilter !== 'all' ? { gallery: galleryFilter } : {};
+      const result = await api.processAllOrders(options);
+      setProcessResults(result);
+      const label = galleryFilter !== 'all' ? ` from "${galleryFilter}"` : '';
+      setSuccess(`Processed ${result.successCount}/${result.total} orders${label}`);
+      await loadCounts();
+      await loadOrders('unprocessed');
+      await loadOrders('processed');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Ship Order ─────────────────────────────────────────
+  const markShipped = async (orderNum, trackingNum) => {
+    const oNum = orderNum || shipOrderNum;
+    const tNum = trackingNum || shipTrackingNum;
+    if (!oNum) { setError('Order number required'); return; }
+    clearMessages();
+    setLoading(true);
+    try {
+      await api.shipOrderByNum(oNum, 'USPS', tNum || '');
+      setSuccess(`Order ${oNum} marked as shipped${tNum ? ` (${tNum})` : ''}`);
+      setShipOrderNum('');
+      setShipTrackingNum('');
+      await loadCounts();
+      await loadOrders('processed');
+      await loadOrders('shipped');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Batch Ship All ─────────────────────────────────────
+  const [batchTrackingNum, setBatchTrackingNum] = useState('');
+  const [showBatchShip, setShowBatchShip] = useState(false);
+
+  const batchShipAll = async () => {
+    clearMessages();
+    setLoading(true);
+    try {
+      const gallery = galleryFilter !== 'all' ? galleryFilter : null;
+      const result = await api.batchShipOrders('USPS', batchTrackingNum || '', gallery);
+      const label = gallery ? ` from "${gallery}"` : '';
+      setSuccess(`Shipped ${result.successCount}/${result.total} orders${label}`);
+      setBatchTrackingNum('');
+      setShowBatchShip(false);
+      await loadCounts();
+      await loadOrders('processed');
+      await loadOrders('shipped');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Check ShipStation ──────────────────────────────────
+  const checkShipments = async () => {
+    clearMessages();
+    setLoading(true);
+    try {
+      const result = await api.checkShipments();
+      setSuccess(result.message);
+      await loadCounts();
+      await loadOrders('processed');
+      await loadOrders('shipped');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Render helpers ─────────────────────────────────────
+  const formatDate = (d) => d ? new Date(d).toLocaleString() : '—';
+
+  const renderOrderTable = (orders, status) => {
+    if (orders.length === 0) {
+      const messages = {
+        unprocessed: galleryFilter !== 'all'
+          ? `No unprocessed orders for "${galleryFilter}".`
+          : 'No unprocessed orders. Click "Fetch New Orders" to pull from PhotoDay.',
+        processed: 'No processed orders awaiting shipment.',
+        shipped: 'No shipped orders yet.',
+      };
+      return (
+        <div className="empty-state">
+          <div className="empty-state-icon">{status === 'unprocessed' ? '⬡' : status === 'processed' ? '◧' : '✓'}</div>
+          <div className="empty-state-title">No {status} orders</div>
+          <div className="empty-state-text">{messages[status]}</div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Order #</th>
+              <th>Gallery</th>
+              <th>Studio</th>
+              <th>Items</th>
+              <th>Type</th>
+              <th>Placed</th>
+              {status === 'processed' && <><th>SS Order</th><th>Processed</th></>}
+              {status === 'shipped' && <><th>Carrier</th><th>Tracking</th><th>Shipped</th></>}
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order) => (
+              <tr key={order.orderNum}>
+                <td className="mono" style={{ fontWeight: 600 }}>
+                  <a
+                    href={`https://pdx.photoday.com/${order.isBulk ? 'orders-bulk' : 'orders'}/${order.orderId}/info`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--accent)', textDecoration: 'none' }}
+                    title="Open in PhotoDay"
+                  >
+                    {order.orderNum}
+                  </a>
+                </td>
+                <td>
+                  <span style={{
+                    padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: 12,
+                    background: 'var(--bg-input)', border: '1px solid var(--border-light)',
+                  }}>
+                    {order.gallery || '—'}
+                  </span>
+                </td>
+                <td>{order.studioName || '—'}</td>
+                <td>
+                  <div style={{ fontSize: 12 }}>
+                    {(order.items || []).map((item, i) => (
+                      <div key={i} style={{ color: 'var(--text-secondary)' }}>
+                        {item.quantity}x {item.description}
+                      </div>
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  <span className={`badge ${order.isBulk ? 'badge-warning' : 'badge-info'}`}>
+                    {order.isBulk ? 'Bulk' : 'Drop'}
+                  </span>
+                </td>
+                <td style={{ fontSize: 12 }}>{formatDate(order.placedAt)}</td>
+
+                {status === 'processed' && (
+                  <>
+                    <td className="mono" style={{ fontSize: 12 }}>
+                      {order.shipstationOrderId ? (
+                        <span className="badge badge-success">SS#{order.shipstationOrderId}</span>
+                      ) : order.shipstationError ? (
+                        <span className="badge badge-error" title={order.shipstationError}>SS Error</span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ fontSize: 12 }}>{formatDate(order.processedAt)}</td>
+                  </>
+                )}
+
+                {status === 'shipped' && (
+                  <>
+                    <td className="mono" style={{ fontSize: 12 }}>{order.carrier || '—'}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{order.trackingNumber || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{formatDate(order.shippedAt)}</td>
+                  </>
+                )}
+
+                <td>
+                  <div className="btn-group">
+                    {status === 'unprocessed' && (
+                      <button className="btn btn-sm btn-primary" onClick={() => processSingle(order.orderNum)} disabled={loading}>
+                        Process
+                      </button>
+                    )}
+                    {status === 'processed' && (
+                      <button className="btn btn-sm btn-success" onClick={() => {
+                        setShipOrderNum(order.orderNum);
+                        setActiveTab('ship-modal');
+                      }}>
+                        Ship
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // ─── Process button label ───────────────────────────────
+  const processButtonLabel = () => {
+    const count = filteredOrders.length;
+    if (galleryFilter !== 'all') {
+      return `Process "${galleryFilter}" (${count})`;
+    }
+    return `Process All (${count})`;
+  };
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1 className="page-title">Order Management</h1>
+        <p className="page-subtitle">PhotoDay PDX order tracking and processing</p>
+      </div>
+
+      {error && <div className="alert alert-error">⚠ {error}</div>}
+      {success && <div className="alert alert-success">✓ {success}</div>}
+
+      {/* ─── Status Bar ──────────────────────────────────── */}
+      <div className="stats-grid" style={{ marginBottom: 24 }}>
+        <div className="stat-card" onClick={() => setActiveTab('unprocessed')} style={{ cursor: 'pointer', borderColor: activeTab === 'unprocessed' ? 'var(--accent)' : undefined }}>
+          <span className="stat-label">Unprocessed</span>
+          <span className="stat-value" style={{ color: counts.unprocessed > 0 ? 'var(--warning)' : 'var(--text-muted)' }}>{counts.unprocessed}</span>
+        </div>
+        <div className="stat-card" onClick={() => setActiveTab('processed')} style={{ cursor: 'pointer', borderColor: activeTab === 'processed' ? 'var(--accent)' : undefined }}>
+          <span className="stat-label">Awaiting Shipment</span>
+          <span className="stat-value" style={{ color: counts.processed > 0 ? 'var(--info)' : 'var(--text-muted)' }}>{counts.processed}</span>
+        </div>
+        <div className="stat-card" onClick={() => setActiveTab('shipped')} style={{ cursor: 'pointer', borderColor: activeTab === 'shipped' ? 'var(--accent)' : undefined }}>
+          <span className="stat-label">Shipped</span>
+          <span className="stat-value" style={{ color: 'var(--success)' }}>{counts.shipped}</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Total Orders</span>
+          <span className="stat-value">{counts.total}</span>
+        </div>
+      </div>
+
+      {/* ─── Auto-Fetch Controls ─────────────────────────── */}
+      <div className="card" style={{ marginBottom: 24, padding: '16px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <label className="checkbox-wrapper">
+            <input type="checkbox" checked={autoFetchEnabled} onChange={(e) => toggleAutoFetch(e.target.checked)} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Auto-fetch orders</span>
+          </label>
+
+          <select className="form-select" value={autoFetchInterval} onChange={(e) => updateInterval(parseInt(e.target.value))}
+            style={{ width: 160, padding: '6px 10px', fontSize: 13 }}>
+            {INTERVAL_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+
+          <button className="btn btn-primary btn-sm" onClick={fetchNewOrders} disabled={loading}>
+            {loading ? 'Fetching...' : 'Fetch New Orders'}
+          </button>
+
+          <button className="btn btn-secondary btn-sm" onClick={checkShipments} disabled={loading}>
+            Check ShipStation
+          </button>
+
+          <div className="toolbar-spacer" />
+
+          {lastFetch && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Last fetch: {formatDate(lastFetch)}
+            </span>
+          )}
+
+          {autoFetchEnabled && (
+            <span className="badge badge-success" style={{ fontSize: 10 }}>AUTO</span>
+          )}
+        </div>
+      </div>
+
+      {/* ─── Folder Sort Shortcuts ────────────────────────── */}
+      <div className="card" style={{ marginBottom: 24, padding: '12px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Sort files by:</span>
+          {[
+            { levels: ['no_sort'], label: 'Flat' },
+            { levels: ['gallery'], label: 'Gallery' },
+            { levels: ['shipping_type'], label: 'Shipping Type' },
+            { levels: ['gallery', 'shipping_name'], label: 'Gallery → Shipping Name' },
+          ].map(preset => {
+            const isActive = JSON.stringify(folderSort) === JSON.stringify(preset.levels);
+            return (
+              <button
+                key={preset.label}
+                className={`btn btn-sm ${isActive ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={async () => {
+                  try {
+                    await api.updateFolderSort(preset.levels);
+                    setFolderSort(preset.levels);
+                    setSuccess(`Folder sort: ${preset.label}`);
+                  } catch (err) { setError(err.message); }
+                }}
+                style={{ padding: '3px 10px', fontSize: 11 }}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+          <div className="toolbar-spacer" />
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            Current: {folderSort.length > 0 ? folderSort.join(' → ') : 'order_id'}
+          </span>
+        </div>
+      </div>
+
+      {/* ─── Tabs ────────────────────────────────────────── */}
+      <div className="tabs">
+        <button className={`tab ${activeTab === 'unprocessed' ? 'active' : ''}`} onClick={() => setActiveTab('unprocessed')}>
+          Unprocessed {counts.unprocessed > 0 && <span className="badge badge-warning" style={{ marginLeft: 6 }}>{counts.unprocessed}</span>}
+        </button>
+        <button className={`tab ${activeTab === 'processed' ? 'active' : ''}`} onClick={() => setActiveTab('processed')}>
+          Awaiting Shipment {counts.processed > 0 && <span className="badge badge-info" style={{ marginLeft: 6 }}>{counts.processed}</span>}
+        </button>
+        <button className={`tab ${activeTab === 'shipped' ? 'active' : ''}`} onClick={() => setActiveTab('shipped')}>
+          Shipped {counts.shipped > 0 && <span className="badge badge-success" style={{ marginLeft: 6 }}>{counts.shipped}</span>}
+        </button>
+      </div>
+
+      {/* ─── Gallery Filter ──────────────────────────────── */}
+      {galleries.length > 0 && (activeTab === 'unprocessed' || activeTab === 'processed' || activeTab === 'shipped') && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px',
+          background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)',
+          marginBottom: 0, borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Gallery:</span>
+          <button
+            className={`btn btn-sm ${galleryFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setGalleryFilter('all')}
+            style={{ padding: '3px 10px', fontSize: 11 }}
+          >
+            All ({currentOrders.length})
+          </button>
+          {galleries.map(g => {
+            const count = currentOrders.filter(o => o.gallery === g).length;
+            return (
+              <button
+                key={g}
+                className={`btn btn-sm ${galleryFilter === g ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setGalleryFilter(g)}
+                style={{ padding: '3px 10px', fontSize: 11 }}
+              >
+                {g} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─── Tab Content ─────────────────────────────────── */}
+      {activeTab === 'unprocessed' && (
+        <div className="card" style={{ borderRadius: galleries.length > 0 ? '0 0 var(--radius-md) var(--radius-md)' : undefined }}>
+          <div className="card-header">
+            <h3 className="card-title">
+              Unprocessed Orders
+              {galleryFilter !== 'all' && (
+                <span style={{ fontWeight: 400, fontSize: 13, color: 'var(--text-muted)', marginLeft: 8 }}>
+                  — {galleryFilter}
+                </span>
+              )}
+            </h3>
+            {filteredOrders.length > 0 && (
+              <button className="btn btn-primary" onClick={processFiltered} disabled={loading}>
+                {loading ? 'Processing...' : processButtonLabel()}
+              </button>
+            )}
+          </div>
+          {renderOrderTable(filteredOrders, 'unprocessed')}
+
+          {processResults && (
+            <div style={{ marginTop: 20, padding: 16, background: 'var(--bg-input)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+                Processing Results
+                {processResults.gallery && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> — {processResults.gallery}</span>}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                {processResults.successCount} succeeded, {processResults.errorCount} failed out of {processResults.total}
+              </div>
+              {processResults.results?.filter(r => !r.success).map((r, i) => (
+                <div key={i} style={{ fontSize: 11, color: 'var(--error)', marginTop: 4 }}>
+                  {r.orderNum}: {r.error}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'processed' && (
+        <div className="card" style={{ borderRadius: galleries.length > 0 ? '0 0 var(--radius-md) var(--radius-md)' : undefined }}>
+          <div className="card-header">
+            <h3 className="card-title">
+              Awaiting Shipment
+              {galleryFilter !== 'all' && (
+                <span style={{ fontWeight: 400, fontSize: 13, color: 'var(--text-muted)', marginLeft: 8 }}>
+                  — {galleryFilter}
+                </span>
+              )}
+            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                ShipStation polled every 5 min
+              </span>
+              {filteredOrders.length > 0 && (
+                <button className="btn btn-success btn-sm" onClick={() => setShowBatchShip(!showBatchShip)}>
+                  {showBatchShip ? 'Cancel' : `Mark All Shipped (${filteredOrders.length})`}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {showBatchShip && filteredOrders.length > 0 && (
+            <div style={{
+              padding: '14px 20px', background: 'var(--bg-input)', borderBottom: '1px solid var(--border-light)',
+              display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>
+                Ship {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
+                {galleryFilter !== 'all' ? ` from "${galleryFilter}"` : ''}:
+              </span>
+              <input className="form-input" value={batchTrackingNum}
+                onChange={(e) => setBatchTrackingNum(e.target.value)}
+                placeholder="Tracking number (optional)"
+                style={{ width: 250, padding: '6px 10px', fontSize: 13 }}
+              />
+              <button className="btn btn-success btn-sm" onClick={batchShipAll} disabled={loading}>
+                {loading ? 'Shipping...' : `Confirm Ship All${batchTrackingNum ? '' : ' (no tracking)'}`}
+              </button>
+            </div>
+          )}
+
+          {renderOrderTable(filteredOrders, 'processed')}
+        </div>
+      )}
+
+      {activeTab === 'shipped' && (
+        <div className="card" style={{ borderRadius: galleries.length > 0 ? '0 0 var(--radius-md) var(--radius-md)' : undefined }}>
+          <div className="card-header">
+            <h3 className="card-title">
+              Shipped Orders
+              {galleryFilter !== 'all' && (
+                <span style={{ fontWeight: 400, fontSize: 13, color: 'var(--text-muted)', marginLeft: 8 }}>
+                  — {galleryFilter}
+                </span>
+              )}
+            </h3>
+            {filteredOrders.length > 0 && (
+              <button className="btn btn-primary btn-sm" onClick={async () => {
+                clearMessages();
+                setLoading(true);
+                try {
+                  const gallery = galleryFilter !== 'all' ? galleryFilter : null;
+                  const result = await api.syncShippedToPhotoDay(gallery);
+                  if (result.total === 0) {
+                    setSuccess('All shipped orders are already synced to PhotoDay');
+                  } else {
+                    setSuccess(`Synced ${result.successCount}/${result.total} orders to PhotoDay`);
+                  }
+                  await loadOrders('shipped');
+                } catch (err) {
+                  setError(err.message);
+                } finally {
+                  setLoading(false);
+                }
+              }} disabled={loading}>
+                {loading ? 'Syncing...' : 'Sync to PhotoDay'}
+              </button>
+            )}
+          </div>
+          {renderOrderTable(filteredOrders, 'shipped')}
+        </div>
+      )}
+
+      {/* ─── Ship Modal ──────────────────────────────────── */}
+      {activeTab === 'ship-modal' && (
+        <div className="card" style={{ maxWidth: 500 }}>
+          <h3 className="card-title" style={{ marginBottom: 20 }}>Mark Order as Shipped</h3>
+          <div className="form-group">
+            <label className="form-label">Order Number</label>
+            <input className="form-input" value={shipOrderNum} onChange={(e) => setShipOrderNum(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Tracking Number <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+            <input className="form-input" value={shipTrackingNum} onChange={(e) => setShipTrackingNum(e.target.value)} placeholder="Leave blank if no tracking" />
+          </div>
+          <div className="btn-group">
+            <button className="btn btn-success" onClick={() => markShipped()} disabled={loading}>
+              {loading ? 'Sending...' : `Mark as Shipped${shipTrackingNum ? '' : ' (no tracking)'}`}
+            </button>
+            <button className="btn btn-secondary" onClick={() => setActiveTab('processed')}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

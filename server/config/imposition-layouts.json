@@ -1,0 +1,301 @@
+{
+  "layouts": [
+    {
+      "id": "wallets-8x10",
+      "name": "8 Wallets on 8x10",
+      "cols": 4,
+      "rows": 2,
+      "itemWidth": 2.5,
+      "itemHeight": 3.5,
+      "sheetWidth": 10,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "gap": 0,
+      "textOverlays": []
+    },
+    {
+      "id": "39472f6c-5e99-4e91-beaf-55652ee8439d",
+      "name": "4 Mini Magnets (5x8)",
+      "cols": 2,
+      "rows": 2,
+      "itemWidth": 2.5,
+      "itemHeight": 3.5,
+      "sheetWidth": 5,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "gap": 0.0005,
+      "textOverlays": [
+        {
+          "text": "{order_id} - {gallery} - {item_description}",
+          "x": 0.2,
+          "y": 7.5,
+          "fontSize": 10,
+          "color": "#000000"
+        }
+      ]
+    },
+    {
+      "id": "6d7a67e0-194e-4549-9e60-22fcac3e0a95",
+      "name": " 2 Trading Cards",
+      "cols": 1,
+      "rows": 2,
+      "itemWidth": 5,
+      "itemHeight": 3.5,
+      "sheetWidth": 5,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "gap": 1,
+      "textOverlays": [
+        {
+          "text": "Trading Card - {first_name} {Last_name} Order: {order_id}",
+          "x": 0.1,
+          "y": 3.85,
+          "fontSize": 8,
+          "color": "#000000",
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "6f45a0e3-0a27-4a1e-a8e6-78d9e91fa886",
+      "name": "2 Magnets - 5x8",
+      "cols": 2,
+      "rows": 1,
+      "itemWidth": 3.5,
+      "itemHeight": 5,
+      "sheetWidth": 8,
+      "sheetHeight": 5,
+      "dpi": 300,
+      "colGap": 1,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} - {order_id} - Magnets",
+          "x": 4,
+          "y": 0.1,
+          "fontSize": 9,
+          "color": "#000000",
+          "rotation": 90
+        }
+      ]
+    },
+    {
+      "id": "c3cb90c8-f2f4-4589-81ba-42c47a3d38eb",
+      "name": "Small Pano",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 24,
+      "itemHeight": 8,
+      "sheetWidth": 26,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order:{order_id} ",
+          "x": 24.3,
+          "y": 7.9,
+          "fontSize": 8,
+          "color": "#000000",
+          "rotation": -90
+        }
+      ]
+    },
+    {
+      "id": "5972b494-b0f0-4ef7-817d-606bdecc6888",
+      "name": "Memory Mate Plaque",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 8,
+      "itemHeight": 10,
+      "sheetWidth": 8,
+      "sheetHeight": 11,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order:{order_id}",
+          "x": 0.1,
+          "y": 10.1,
+          "fontSize": 10,
+          "color": "#000000"
+        },
+        {
+          "text": "Plaque Please REMOVE",
+          "x": 2,
+          "y": 10.5,
+          "fontSize": 10,
+          "color": "#000000"
+        }
+      ]
+    },
+    {
+      "id": "a6d7b19a-10f6-4960-a89f-22db5b427812",
+      "name": "5x7 Team Plaque",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 7,
+      "itemHeight": 5,
+      "sheetWidth": 8,
+      "sheetHeight": 5,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "Plaque PLEASE REMOVE",
+          "x": 7.1,
+          "y": 4.5,
+          "fontSize": 10,
+          "color": "#000000",
+          "rotation": -90
+        },
+        {
+          "text": "{first_name} {last_name} Order:{order_id}",
+          "x": 7.5,
+          "y": 4.5,
+          "fontSize": 7,
+          "color": "#000000",
+          "rotation": -90
+        }
+      ]
+    },
+    {
+      "id": "3bfad89b-5fc2-454c-aab6-f06edcb88340",
+      "name": "8x10 Team Plaque",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 10,
+      "itemHeight": 8,
+      "sheetWidth": 11,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "PLAQUE PLEASE REMOVE",
+          "x": 10.05,
+          "y": 6.4,
+          "fontSize": 10,
+          "color": "#000000",
+          "rotation": -90
+        },
+        {
+          "text": "{first_name} {last_name} Order:{order_id}",
+          "x": 10.5,
+          "y": 6.2,
+          "fontSize": 8,
+          "color": "#000000",
+          "rotation": -90
+        }
+      ]
+    },
+    {
+      "id": "5692caa8-e3d3-48e8-a03f-50e6fd0cb829",
+      "name": "Button",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 5,
+      "itemHeight": 4,
+      "sheetWidth": 6,
+      "sheetHeight": 4,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order:{order_id}",
+          "x": 5.2,
+          "y": 3.9,
+          "fontSize": 7,
+          "color": "#000000",
+          "rotation": -90
+        }
+      ]
+    },
+    {
+      "id": "120f7ea3-f22a-48b7-aee3-1fa9eb7972f0",
+      "name": "5x7 IND Plaque",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 5,
+      "itemHeight": 7,
+      "sheetWidth": 5,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "PLAQUE PLEASE REMOVE",
+          "x": 0.3,
+          "y": 7,
+          "fontSize": 10,
+          "color": "#000000"
+        },
+        {
+          "text": "{first_name} {last_name} Order:{order_id}",
+          "x": 0.1,
+          "y": 7.4,
+          "fontSize": 9,
+          "color": "#000000"
+        }
+      ]
+    },
+    {
+      "id": "f1cb8db4-b03f-4a72-bb6c-26d1e1620a8e",
+      "name": "10x30 Pano",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 30,
+      "itemHeight": 10,
+      "sheetWidth": 36,
+      "sheetHeight": 13,
+      "dpi": 300,
+      "colGap": 0.01,
+      "rowGap": 1,
+      "textOverlays": []
+    }
+  ],
+  "mappings": [
+    {
+      "externalId": "12",
+      "layoutId": "wallets-8x10"
+    },
+    {
+      "externalId": "17",
+      "layoutId": "39472f6c-5e99-4e91-beaf-55652ee8439d"
+    },
+    {
+      "externalId": "13",
+      "layoutId": "6d7a67e0-194e-4549-9e60-22fcac3e0a95"
+    },
+    {
+      "externalId": "15",
+      "layoutId": "6f45a0e3-0a27-4a1e-a8e6-78d9e91fa886"
+    },
+    {
+      "externalId": "32",
+      "layoutId": "c3cb90c8-f2f4-4589-81ba-42c47a3d38eb"
+    },
+    {
+      "externalId": "35",
+      "layoutId": "a6d7b19a-10f6-4960-a89f-22db5b427812"
+    },
+    {
+      "externalId": "36",
+      "layoutId": "3bfad89b-5fc2-454c-aab6-f06edcb88340"
+    },
+    {
+      "externalId": "21",
+      "layoutId": "120f7ea3-f22a-48b7-aee3-1fa9eb7972f0"
+    },
+    {
+      "externalId": "22",
+      "layoutId": "5972b494-b0f0-4ef7-817d-606bdecc6888"
+    }
+  ]
+}
