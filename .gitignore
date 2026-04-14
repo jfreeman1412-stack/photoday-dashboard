@@ -6,3 +6,7 @@ output/
 *.log
 .DS_Store
 server/config/orders-db.json
+"node_modules/" 
+".env" 
+"dist/" 
+"build/" 
