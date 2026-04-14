@@ -1,5 +1,5 @@
 {
-  "basePath": "C:\\SportslinePhotos\\Specialty",
+  "basePath": "Z:\\Photo Day\\__Open Orders\\SportslinePhotos",
   "products": [
     {
       "externalId": "14",
@@ -40,6 +40,16 @@
       "externalId": "37",
       "productName": "Coffee Mug - Team",
       "subfolder": "Coffee Mug - Team"
+    },
+    {
+      "externalId": "33",
+      "productName": "10x30 Pano",
+      "subfolder": "10x30 Pano"
+    },
+    {
+      "externalId": "34",
+      "productName": "12x36 Pano",
+      "subfolder": "12x36 Pano"
     }
   ],
   "highlightColors": {

@@ -257,7 +257,10 @@
       "dpi": 300,
       "colGap": 0.01,
       "rowGap": 1,
-      "textOverlays": []
+      "textOverlays": [],
+      "centerOnSheet": false,
+      "marginLeft": 3,
+      "marginTop": 1.5
     }
   ],
   "mappings": [
@@ -296,6 +299,10 @@
     {
       "externalId": "22",
       "layoutId": "5972b494-b0f0-4ef7-817d-606bdecc6888"
+    },
+    {
+      "externalId": "33",
+      "layoutId": "f1cb8db4-b03f-4a72-bb6c-26d1e1620a8e"
     }
   ]
 }

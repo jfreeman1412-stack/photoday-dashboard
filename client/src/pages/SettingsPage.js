@@ -18,7 +18,8 @@ export default function SettingsPage() {
   // Layout form
   const emptyLayout = {
     name: '', cols: 4, rows: 2, itemWidth: 2.5, itemHeight: 3.5,
-    sheetWidth: 10, sheetHeight: 8, dpi: 300, colGap: 0.01, rowGap: 0.01, textOverlays: [],
+    sheetWidth: 10, sheetHeight: 8, dpi: 300, colGap: 0.01, rowGap: 0.01,
+    centerOnSheet: false, marginLeft: 0, marginTop: 0, textOverlays: [],
   };
   const [layoutForm, setLayoutForm] = useState({ ...emptyLayout });
 
@@ -381,6 +382,56 @@ export default function SettingsPage() {
                     <div className="form-group"><label className="form-label">Row Gap (")</label><input className="form-input" type="number" min="0" step="0.01" value={layoutForm.rowGap} onChange={(e) => updateField('rowGap', e.target.value)} /></div>
                   </div>
 
+                  {/* Position on sheet */}
+                  {(() => {
+                    const sw = parseFloat(layoutForm.sheetWidth) || 10;
+                    const sh = parseFloat(layoutForm.sheetHeight) || 8;
+                    const iw = parseFloat(layoutForm.itemWidth) || 2.5;
+                    const ih = parseFloat(layoutForm.itemHeight) || 3.5;
+                    const c = parseInt(layoutForm.cols) || 1;
+                    const r = parseInt(layoutForm.rows) || 1;
+                    const cg = parseFloat(layoutForm.colGap) || 0;
+                    const rg = parseFloat(layoutForm.rowGap) || 0;
+                    const contentW = (c * iw) + ((c - 1) * cg);
+                    const contentH = (r * ih) + ((r - 1) * rg);
+                    const calcMarginLeft = Math.max((sw - contentW) / 2, 0);
+                    const calcMarginTop = Math.max((sh - contentH) / 2, 0);
+                    const isCentered = layoutForm.centerOnSheet;
+
+                    return (
+                      <div className="form-row" style={{ alignItems: 'flex-end' }}>
+                        <div className="form-group" style={{ flex: '0 0 auto' }}>
+                          <label className="form-label" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input type="checkbox" checked={isCentered} onChange={(e) => {
+                              updateField('centerOnSheet', e.target.checked);
+                              if (e.target.checked) {
+                                updateField('marginLeft', parseFloat(calcMarginLeft.toFixed(2)));
+                                updateField('marginTop', parseFloat(calcMarginTop.toFixed(2)));
+                              }
+                            }} />
+                            Center on sheet
+                          </label>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Left Margin (")</label>
+                          <input className="form-input" type="number" min="0" step="0.1"
+                            value={isCentered ? parseFloat(calcMarginLeft.toFixed(2)) : (layoutForm.marginLeft || 0)}
+                            onChange={(e) => updateField('marginLeft', parseFloat(e.target.value) || 0)}
+                            disabled={isCentered}
+                            style={{ opacity: isCentered ? 0.5 : 1 }} />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Top Margin (")</label>
+                          <input className="form-input" type="number" min="0" step="0.1"
+                            value={isCentered ? parseFloat(calcMarginTop.toFixed(2)) : (layoutForm.marginTop || 0)}
+                            onChange={(e) => updateField('marginTop', parseFloat(e.target.value) || 0)}
+                            disabled={isCentered}
+                            style={{ opacity: isCentered ? 0.5 : 1 }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Info */}
                   <div style={{ padding: '8px 12px', background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 11, color: 'var(--text-secondary)', marginBottom: 16 }}>
                     {layoutPreview.text}
@@ -475,6 +526,13 @@ export default function SettingsPage() {
                       const cg = parseFloat(layoutForm.colGap) || 0;
                       const rg = parseFloat(layoutForm.rowGap) || 0;
 
+                      // Margin/centering
+                      const contentW_in = (c * iw) + ((c - 1) * cg);
+                      const contentH_in = (r * ih) + ((r - 1) * rg);
+                      const isCentered = layoutForm.centerOnSheet;
+                      const offsetLeft = isCentered ? Math.max((sw - contentW_in) / 2, 0) : (parseFloat(layoutForm.marginLeft) || 0);
+                      const offsetTop = isCentered ? Math.max((sh - contentH_in) / 2, 0) : (parseFloat(layoutForm.marginTop) || 0);
+
                       // Scale: everything is in inches, convert to preview pixels
                       const maxW = 328;
                       const maxH = 400;
@@ -487,24 +545,22 @@ export default function SettingsPage() {
                       const pvH = Math.round(sh * scale);
 
                       // Content area
-                      const contentW_in = (c * iw) + ((c - 1) * cg);
-                      const contentH_in = (r * ih) + ((r - 1) * rg);
-                      const extraW_in = sw - contentW_in;
-                      const extraH_in = sh - contentH_in;
+                      const extraW_in = sw - contentW_in - offsetLeft;
+                      const extraH_in = sh - contentH_in - offsetTop;
 
                       // SVG includes margin for labels
-                      const margin = 24;
-                      const svgW = pvW + margin * 2;
-                      const svgH = pvH + margin * 2 + 20;
+                      const uiMargin = 24;
+                      const svgW = pvW + uiMargin * 2;
+                      const svgH = pvH + uiMargin * 2 + 20;
 
-                      // Build grid cells — all positions in inches then scaled
+                      // Build grid cells — all positions in inches then scaled, offset by margins
                       const cells = [];
                       for (let row = 0; row < r; row++) {
                         for (let col = 0; col < c; col++) {
-                          const xIn = col * (iw + cg);
-                          const yIn = row * (ih + rg);
-                          const x = margin + xIn * scale;
-                          const y = margin + yIn * scale;
+                          const xIn = offsetLeft + col * (iw + cg);
+                          const yIn = offsetTop + row * (ih + rg);
+                          const x = uiMargin + xIn * scale;
+                          const y = uiMargin + yIn * scale;
                           const w = iw * scale;
                           const h = ih * scale;
                           cells.push(
@@ -524,15 +580,15 @@ export default function SettingsPage() {
                       const gapLines = [];
                       if (cg > 0) {
                         for (let col = 1; col < c; col++) {
-                          const gapStartIn = col * iw + (col - 1) * cg;
-                          const gapX = margin + gapStartIn * scale;
+                          const gapStartIn = offsetLeft + col * iw + (col - 1) * cg;
+                          const gapX = uiMargin + gapStartIn * scale;
                           const gapW = cg * scale;
                           gapLines.push(
                             <g key={`cg${col}`}>
-                              <rect x={gapX} y={margin} width={Math.max(gapW, 1)} height={contentH_in * scale}
+                              <rect x={gapX} y={uiMargin + offsetTop * scale} width={Math.max(gapW, 1)} height={contentH_in * scale}
                                 fill="#ff6b6b" fillOpacity="0.15" />
                               {gapW > 8 && (
-                                <text x={gapX + gapW / 2} y={margin + contentH_in * scale + 12}
+                                <text x={gapX + gapW / 2} y={uiMargin + (offsetTop + contentH_in) * scale + 12}
                                   textAnchor="middle" fontSize="8" fill="#ff6b6b">{cg}"</text>
                               )}
                             </g>
@@ -541,12 +597,12 @@ export default function SettingsPage() {
                       }
                       if (rg > 0) {
                         for (let row = 1; row < r; row++) {
-                          const gapStartIn = row * ih + (row - 1) * rg;
-                          const gapY = margin + gapStartIn * scale;
+                          const gapStartIn = offsetTop + row * ih + (row - 1) * rg;
+                          const gapY = uiMargin + gapStartIn * scale;
                           const gapH = rg * scale;
                           gapLines.push(
                             <g key={`rg${row}`}>
-                              <rect x={margin} y={gapY} width={contentW_in * scale} height={Math.max(gapH, 1)}
+                              <rect x={uiMargin + offsetLeft * scale} y={gapY} width={contentW_in * scale} height={Math.max(gapH, 1)}
                                 fill="#ff6b6b" fillOpacity="0.15" />
                             </g>
                           );
@@ -556,27 +612,53 @@ export default function SettingsPage() {
                       // Extra space shading
                       const extraSpace = [];
                       if (extraW_in > 0.01) {
-                        const exX = margin + contentW_in * scale;
+                        const exX = uiMargin + (offsetLeft + contentW_in) * scale;
                         extraSpace.push(
                           <g key="exW">
-                            <rect x={exX} y={margin} width={extraW_in * scale} height={pvH}
+                            <rect x={exX} y={uiMargin} width={extraW_in * scale} height={pvH}
                               fill="#ffaa00" fillOpacity="0.08" stroke="#ffaa00" strokeWidth="0.5" strokeDasharray="4,3" />
-                            <text x={exX + (extraW_in * scale) / 2} y={margin + pvH / 2}
+                            <text x={exX + (extraW_in * scale) / 2} y={uiMargin + pvH / 2}
                               textAnchor="middle" fontSize="9" fill="#ffaa00" fontWeight="600">
                               {extraW_in.toFixed(1)}"
                             </text>
                           </g>
                         );
                       }
+                      // Left margin shading
+                      if (offsetLeft > 0.01) {
+                        extraSpace.push(
+                          <g key="mL">
+                            <rect x={uiMargin} y={uiMargin} width={offsetLeft * scale} height={pvH}
+                              fill="#66bb6a" fillOpacity="0.08" stroke="#66bb6a" strokeWidth="0.5" strokeDasharray="4,3" />
+                            <text x={uiMargin + (offsetLeft * scale) / 2} y={uiMargin + pvH / 2}
+                              textAnchor="middle" fontSize="9" fill="#66bb6a" fontWeight="600">
+                              {offsetLeft.toFixed(1)}"
+                            </text>
+                          </g>
+                        );
+                      }
                       if (extraH_in > 0.01) {
-                        const exY = margin + contentH_in * scale;
+                        const exY = uiMargin + (offsetTop + contentH_in) * scale;
                         extraSpace.push(
                           <g key="exH">
-                            <rect x={margin} y={exY} width={contentW_in * scale} height={extraH_in * scale}
+                            <rect x={uiMargin} y={exY} width={pvW} height={extraH_in * scale}
                               fill="#ffaa00" fillOpacity="0.08" stroke="#ffaa00" strokeWidth="0.5" strokeDasharray="4,3" />
-                            <text x={margin + (contentW_in * scale) / 2} y={exY + (extraH_in * scale) / 2 + 3}
+                            <text x={uiMargin + pvW / 2} y={exY + (extraH_in * scale) / 2 + 3}
                               textAnchor="middle" fontSize="9" fill="#ffaa00" fontWeight="600">
                               {extraH_in.toFixed(1)}"
+                            </text>
+                          </g>
+                        );
+                      }
+                      // Top margin shading
+                      if (offsetTop > 0.01) {
+                        extraSpace.push(
+                          <g key="mT">
+                            <rect x={uiMargin} y={uiMargin} width={pvW} height={offsetTop * scale}
+                              fill="#66bb6a" fillOpacity="0.08" stroke="#66bb6a" strokeWidth="0.5" strokeDasharray="4,3" />
+                            <text x={uiMargin + pvW / 2} y={uiMargin + (offsetTop * scale) / 2 + 3}
+                              textAnchor="middle" fontSize="9" fill="#66bb6a" fontWeight="600">
+                              {offsetTop.toFixed(1)}"
                             </text>
                           </g>
                         );
@@ -584,8 +666,8 @@ export default function SettingsPage() {
 
                       // Text overlays — positioned in inches, same coordinate system
                       const textIndicators = (layoutForm.textOverlays || []).map((ov, idx) => {
-                        const tx = margin + (ov.x || 0) * scale;
-                        const ty = margin + (ov.y || 0) * scale;
+                        const tx = uiMargin + (ov.x || 0) * scale;
+                        const ty = uiMargin + (ov.y || 0) * scale;
                         const rot = ov.rotation || 0;
                         const lines = (ov.text || 'Text').split('\\n');
                         const displayText = lines[0].substring(0, 25);
@@ -612,28 +694,28 @@ export default function SettingsPage() {
                       // Ruler ticks along top and left
                       const rulerTicks = [];
                       for (let i = 0; i <= sw; i++) {
-                        const x = margin + i * scale;
+                        const x = uiMargin + i * scale;
                         const isMajor = i === Math.floor(i);
                         rulerTicks.push(
-                          <line key={`rtx${i}`} x1={x} y1={margin - (isMajor ? 8 : 4)} x2={x} y2={margin}
+                          <line key={`rtx${i}`} x1={x} y1={uiMargin - (isMajor ? 8 : 4)} x2={x} y2={uiMargin}
                             stroke="#888" strokeWidth={isMajor ? 0.8 : 0.4} />
                         );
                         if (isMajor && i > 0 && i < sw) {
                           rulerTicks.push(
-                            <text key={`rtxl${i}`} x={x} y={margin - 10} textAnchor="middle" fontSize="7" fill="#888">{i}"</text>
+                            <text key={`rtxl${i}`} x={x} y={uiMargin - 10} textAnchor="middle" fontSize="7" fill="#888">{i}"</text>
                           );
                         }
                       }
                       for (let i = 0; i <= sh; i++) {
-                        const y = margin + i * scale;
+                        const y = uiMargin + i * scale;
                         const isMajor = i === Math.floor(i);
                         rulerTicks.push(
-                          <line key={`rty${i}`} x1={margin - (isMajor ? 8 : 4)} y1={y} x2={margin} y2={y}
+                          <line key={`rty${i}`} x1={uiMargin - (isMajor ? 8 : 4)} y1={y} x2={uiMargin} y2={y}
                             stroke="#888" strokeWidth={isMajor ? 0.8 : 0.4} />
                         );
                         if (isMajor && i > 0 && i < sh) {
                           rulerTicks.push(
-                            <text key={`rtyl${i}`} x={margin - 12} y={y + 3} textAnchor="end" fontSize="7" fill="#888">{i}"</text>
+                            <text key={`rtyl${i}`} x={uiMargin - 12} y={y + 3} textAnchor="end" fontSize="7" fill="#888">{i}"</text>
                           );
                         }
                       }
@@ -647,7 +729,7 @@ export default function SettingsPage() {
                           {rulerTicks}
 
                           {/* Sheet — white with strong border */}
-                          <rect x={margin} y={margin} width={pvW} height={pvH}
+                          <rect x={uiMargin} y={uiMargin} width={pvW} height={pvH}
                             fill="white" stroke="#666" strokeWidth="2" />
 
                           {/* Extra space */}
@@ -663,7 +745,7 @@ export default function SettingsPage() {
                           {textIndicators}
 
                           {/* Bottom dimensions */}
-                          <text x={margin + pvW / 2} y={margin + pvH + 16}
+                          <text x={uiMargin + pvW / 2} y={uiMargin + pvH + 16}
                             textAnchor="middle" fontSize="10" fill="#aaa" fontWeight="600">
                             {sw}" × {sh}" sheet
                           </text>

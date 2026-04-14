@@ -89,6 +89,9 @@ class ImpositionService {
       dpi: parseInt(layout.dpi) || 300,
       colGap: parseFloat(layout.colGap) || 0,
       rowGap: parseFloat(layout.rowGap) || 0,
+      centerOnSheet: !!layout.centerOnSheet,
+      marginLeft: parseFloat(layout.marginLeft) || 0,
+      marginTop: parseFloat(layout.marginTop) || 0,
       textOverlays: layout.textOverlays || [],
     };
     data.layouts.push(newLayout);
@@ -112,6 +115,9 @@ class ImpositionService {
     if (updates.dpi !== undefined) parsed.dpi = parseInt(updates.dpi);
     if (updates.colGap !== undefined) parsed.colGap = parseFloat(updates.colGap);
     if (updates.rowGap !== undefined) parsed.rowGap = parseFloat(updates.rowGap);
+    if (updates.centerOnSheet !== undefined) parsed.centerOnSheet = !!updates.centerOnSheet;
+    if (updates.marginLeft !== undefined) parsed.marginLeft = parseFloat(updates.marginLeft);
+    if (updates.marginTop !== undefined) parsed.marginTop = parseFloat(updates.marginTop);
     if (updates.textOverlays !== undefined) parsed.textOverlays = updates.textOverlays;
 
     data.layouts[index] = { ...data.layouts[index], ...parsed };
@@ -238,11 +244,21 @@ class ImpositionService {
     const contentW = (cols * itemPxW) + totalGapX;
     const contentH = (rows * itemPxH) + totalGapY;
 
-    // Content is placed starting at top-left (0,0)
-    const extraW = sheetPxW - contentW;
-    const extraH = sheetPxH - contentH;
+    // Margin/offset — center on sheet or use manual margins
+    let offsetXPx = 0;
+    let offsetYPx = 0;
+    if (rule.centerOnSheet) {
+      offsetXPx = Math.max(Math.round((sheetPxW - contentW) / 2), 0);
+      offsetYPx = Math.max(Math.round((sheetPxH - contentH) / 2), 0);
+    } else {
+      offsetXPx = Math.round((rule.marginLeft || 0) * dpi);
+      offsetYPx = Math.round((rule.marginTop || 0) * dpi);
+    }
 
-    console.log(`[Imposition] ${rule.name}: ${cols}x${rows}, item ${itemPxW}x${itemPxH}px, colGap ${colGapInches}" (${colGapPx}px), rowGap ${rowGapInches}" (${rowGapPx}px), sheet ${sheetPxW}x${sheetPxH}px, extra: ${extraW}px right, ${extraH}px bottom`);
+    const extraW = sheetPxW - contentW - offsetXPx;
+    const extraH = sheetPxH - contentH - offsetYPx;
+
+    console.log(`[Imposition] ${rule.name}: ${cols}x${rows}, item ${itemPxW}x${itemPxH}px, colGap ${colGapInches}" (${colGapPx}px), rowGap ${rowGapInches}" (${rowGapPx}px), offset (${offsetXPx}px, ${offsetYPx}px), sheet ${sheetPxW}x${sheetPxH}px, extra: ${extraW}px right, ${extraH}px bottom`);
 
     // Read and resize source image to exact item size
     const sourceBuffer = await fs.readFile(imagePath);
@@ -250,12 +266,12 @@ class ImpositionService {
       .resize(itemPxW, itemPxH, { fit: 'cover', position: 'center' })
       .toBuffer();
 
-    // Build composites — place items at true size positions
+    // Build composites — place items at true size positions with offset
     const composites = [];
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
-        const x = col * (itemPxW + colGapPx);
-        const y = row * (itemPxH + rowGapPx);
+        const x = offsetXPx + col * (itemPxW + colGapPx);
+        const y = offsetYPx + row * (itemPxH + rowGapPx);
         composites.push({
           input: resizedBuffer,
           left: x,
