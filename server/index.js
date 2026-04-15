@@ -72,6 +72,15 @@ app.listen(config.port, async () => {
 ╚══════════════════════════════════════════════════════════╝
   `);
 
+  // Initialize app settings (apply saved env overrides)
+  try {
+    const appSettings = require('./config/appSettings');
+    await appSettings.init();
+    console.log('[AppSettings] Initialized — saved overrides applied');
+  } catch (err) {
+    console.error('[AppSettings] Init error:', err.message);
+  }
+
   // Initialize scheduler (auto-fetch + ShipStation polling)
   try {
     const schedulerService = require('./services/schedulerService');

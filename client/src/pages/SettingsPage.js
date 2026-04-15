@@ -47,6 +47,12 @@ export default function SettingsPage() {
   // Path settings
   const [pathSettings, setPathSettings] = useState({ downloadBase: '', darkroomTemplateBase: '', txtOutput: '' });
 
+  // App settings (env overrides)
+  const [appSettingsData, setAppSettingsData] = useState({});
+  const [appSettingsFields, setAppSettingsFields] = useState([]);
+  const [appSettingsForm, setAppSettingsForm] = useState({});
+  const [showSecrets, setShowSecrets] = useState({});
+
   const clearMessages = () => { setError(null); setSuccess(null); };
 
   // ─── Load data ──────────────────────────────────────────
@@ -95,8 +101,6 @@ export default function SettingsPage() {
   const loadPaths = useCallback(async () => {
     try {
       const data = await api.getPathSettings();
-      // Use the raw overrides for editing (with variables like {date} intact)
-      // Fall back to the resolved effective paths if no override is set
       setPathSettings({
         downloadBase: data.overrides?.downloadBase || data.downloadBase || '',
         darkroomTemplateBase: data.overrides?.darkroomTemplateBase || data.darkroomTemplateBase || '',
@@ -105,7 +109,21 @@ export default function SettingsPage() {
     } catch (err) { /* silent */ }
   }, []);
 
-  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); loadPaths(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty, loadPaths]);
+  const loadAppSettings = useCallback(async () => {
+    try {
+      const data = await api.getAppSettings();
+      setAppSettingsData(data.settings || {});
+      setAppSettingsFields(data.fields || []);
+      // Initialize form with current values
+      const form = {};
+      for (const [key, setting] of Object.entries(data.settings || {})) {
+        form[key] = setting.value || '';
+      }
+      setAppSettingsForm(form);
+    } catch (err) { /* silent */ }
+  }, []);
+
+  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); loadPaths(); loadAppSettings(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty, loadPaths, loadAppSettings]);
 
   // ─── Layout form helpers ────────────────────────────────
   const updateField = (field, value) => setLayoutForm(prev => ({ ...prev, [field]: value }));
@@ -257,6 +275,25 @@ export default function SettingsPage() {
     } catch (err) { setError(err.message); }
   };
 
+  // ─── App Settings ───────────────────────────────────────
+  const saveAppSettings = async () => {
+    clearMessages();
+    setLoading(true);
+    try {
+      const result = await api.updateAppSettings(appSettingsForm);
+      setAppSettingsData(result.settings || {});
+      // Update form with new masked values
+      const form = {};
+      for (const [key, setting] of Object.entries(result.settings || {})) {
+        form[key] = setting.value || '';
+      }
+      setAppSettingsForm(form);
+      setShowSecrets({});
+      setSuccess('Configuration saved. Some changes may require a server restart.');
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
   // ─── Specialty Products ─────────────────────────────────
   const addSpecialty = async () => {
     if (!newSpecialty.externalId || !newSpecialty.productName) { setError('External ID and product name required'); return; }
@@ -339,6 +376,7 @@ export default function SettingsPage() {
         <button className={`tab ${activeSection === 'templates' ? 'active' : ''}`} onClick={() => setActiveSection('templates')}>Darkroom Templates</button>
         <button className={`tab ${activeSection === 'filename' ? 'active' : ''}`} onClick={() => setActiveSection('filename')}>Filename Config</button>
         <button className={`tab ${activeSection === 'paths' ? 'active' : ''}`} onClick={() => setActiveSection('paths')}>Paths</button>
+        <button className={`tab ${activeSection === 'setup' ? 'active' : ''}`} onClick={() => setActiveSection('setup')}>Setup</button>
       </div>
 
       {/* ═══ IMPOSITION ══════════════════════════════════════ */}
@@ -1290,6 +1328,94 @@ export default function SettingsPage() {
           <button className="btn btn-primary" onClick={savePathSettings}>
             Save Path Settings
           </button>
+        </div>
+      )}
+      {/* ═══ SETUP (env overrides) ══════════════════════════════ */}
+      {activeSection === 'setup' && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">Application Configuration</h3>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+            Configure API credentials and application settings. These values override the .env file and are saved securely. Secret values are masked after saving.
+          </p>
+
+          {(() => {
+            const sections = [
+              { id: 'photoday', label: 'PhotoDay PDX', icon: '📷' },
+              { id: 'shipstation', label: 'ShipStation', icon: '📦' },
+              { id: 'defaults', label: 'Defaults', icon: '⚙️' },
+              { id: 'server', label: 'Server', icon: '🖥️' },
+            ];
+
+            return sections.map(section => {
+              const sectionFields = appSettingsFields.filter(f => f.section === section.id);
+              if (sectionFields.length === 0) return null;
+
+              return (
+                <div key={section.id} style={{ marginBottom: 24 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>{section.icon}</span> {section.label}
+                  </div>
+
+                  {sectionFields.map(field => {
+                    const setting = appSettingsData[field.key] || {};
+                    const isSecret = field.secret;
+                    const isRevealed = showSecrets[field.key];
+                    const formValue = appSettingsForm[field.key] || '';
+                    const isMasked = isSecret && formValue === '••••••••';
+
+                    return (
+                      <div className="form-group" key={field.key} style={{ marginBottom: 12 }}>
+                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {field.label}
+                          {isSecret && setting.hasValue && (
+                            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: 'var(--accent)', color: '#fff' }}>
+                              Configured
+                            </span>
+                          )}
+                        </label>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            className="form-input"
+                            type={isSecret && !isRevealed ? 'password' : 'text'}
+                            value={formValue}
+                            onChange={(e) => setAppSettingsForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                            placeholder={field.default || `Enter ${field.label}`}
+                            style={{ flex: 1 }}
+                          />
+                          {isSecret && (
+                            <button
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => setShowSecrets(prev => ({ ...prev, [field.key]: !prev[field.key] }))}
+                              style={{ minWidth: 60, fontSize: 11 }}
+                              title={isRevealed ? 'Hide' : 'Show'}
+                            >
+                              {isRevealed ? 'Hide' : 'Show'}
+                            </button>
+                          )}
+                        </div>
+                        {isSecret && isMasked && (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                            Value is set. Clear and re-enter to change.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            });
+          })()}
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button className="btn btn-primary" onClick={saveAppSettings} disabled={loading}>
+              {loading ? 'Saving...' : 'Save Configuration'}
+            </button>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Some changes (port, API credentials) require a server restart to take full effect.
+            </span>
+          </div>
         </div>
       )}
     </div>

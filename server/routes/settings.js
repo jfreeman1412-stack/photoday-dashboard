@@ -4,6 +4,30 @@ const darkroomService = require('../services/darkroomService');
 const printSheetService = require('../services/printSheetService');
 const config = require('../config');
 const pathConfig = require('../config/pathConfig');
+const appSettings = require('../config/appSettings');
+
+// ─── APP SETTINGS (env overrides) ─────────────────────────────
+
+router.get('/app-settings', async (req, res) => {
+  try {
+    const settings = await appSettings.getSettings();
+    const fields = appSettings.getFieldDefinitions();
+    res.json({ settings, fields });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/app-settings', async (req, res) => {
+  try {
+    const settings = await appSettings.updateSettings(req.body);
+    // Also reload the main config paths
+    config.reloadPaths();
+    res.json({ success: true, settings, message: 'Settings saved. Some changes may require a server restart.' });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 // ─── PATH SETTINGS ────────────────────────────────────────────
 

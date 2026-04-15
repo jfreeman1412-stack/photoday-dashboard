@@ -103,6 +103,12 @@ class ApiService {
     return this._fetch('/settings/paths', { method: 'PUT', body: JSON.stringify(paths) });
   }
 
+  // App settings (env overrides)
+  getAppSettings() { return this._fetch('/settings/app-settings'); }
+  updateAppSettings(settings) {
+    return this._fetch('/settings/app-settings', { method: 'PUT', body: JSON.stringify(settings) });
+  }
+
   getTemplateMappings() { return this._fetch('/settings/template-mappings'); }
   addTemplateMapping(mapping) {
     return this._fetch('/settings/template-mappings', { method: 'POST', body: JSON.stringify(mapping) });
