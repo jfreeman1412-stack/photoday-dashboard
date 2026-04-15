@@ -17,6 +17,7 @@ class ApiService {
 
   // ─── ORDER MANAGEMENT ───────────────────────────────────
   getOrderCounts() { return this._fetch('/orders/counts'); }
+  getDashboardAnalytics() { return this._fetch('/orders/dashboard'); }
   getUnprocessedOrders() { return this._fetch('/orders/unprocessed'); }
   getProcessedOrders() { return this._fetch('/orders/processed'); }
   getShippedOrders() { return this._fetch('/orders/shipped'); }

@@ -16,6 +16,124 @@ router.get('/counts', async (req, res) => {
   }
 });
 
+// ─── DASHBOARD ANALYTICS ────────────────────────────────────
+router.get('/dashboard', async (req, res) => {
+  try {
+    const allOrders = await orderDatabase.getOrders();
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(todayStart); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Order counts by status
+    const unprocessed = allOrders.filter(o => o.status === 'unprocessed');
+    const processed = allOrders.filter(o => o.status === 'processed');
+    const shipped = allOrders.filter(o => o.status === 'shipped');
+
+    // Orders processed in time ranges
+    const processedToday = allOrders.filter(o => o.processedAt && new Date(o.processedAt) >= todayStart).length;
+    const processedThisWeek = allOrders.filter(o => o.processedAt && new Date(o.processedAt) >= weekStart).length;
+    const processedThisMonth = allOrders.filter(o => o.processedAt && new Date(o.processedAt) >= monthStart).length;
+
+    // Average processing time (fetchedAt → processedAt)
+    const processTimes = allOrders
+      .filter(o => o.fetchedAt && o.processedAt)
+      .map(o => new Date(o.processedAt) - new Date(o.fetchedAt));
+    const avgProcessTimeMs = processTimes.length > 0
+      ? processTimes.reduce((a, b) => a + b, 0) / processTimes.length
+      : 0;
+
+    // Items by product type
+    const productCounts = {};
+    let totalImages = 0;
+    let totalImagesThisWeek = 0;
+    let specialtyPending = 0;
+
+    const specialtyService = require('../services/specialtyService');
+    const specialtyProducts = await specialtyService.getProducts();
+    const specialtyIds = new Set(specialtyProducts.map(p => p.externalId));
+
+    for (const order of allOrders) {
+      for (const item of order.items || []) {
+        const key = item.description || `SKU: ${item.externalId}`;
+        const qty = item.quantity || 1;
+        const imgCount = item.imageCount || 0;
+        productCounts[key] = (productCounts[key] || 0) + qty;
+        totalImages += imgCount * qty;
+
+        if (order.processedAt && new Date(order.processedAt) >= weekStart) {
+          totalImagesThisWeek += imgCount * qty;
+        }
+
+        if (order.status === 'unprocessed' && specialtyIds.has(String(item.externalId))) {
+          specialtyPending += qty;
+        }
+      }
+    }
+
+    // Sort product counts descending
+    const productBreakdown = Object.entries(productCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Gallery overview
+    const galleryMap = {};
+    for (const order of allOrders) {
+      const g = order.gallery || 'No Gallery';
+      if (!galleryMap[g]) galleryMap[g] = { total: 0, unprocessed: 0, processed: 0, shipped: 0 };
+      galleryMap[g].total++;
+      galleryMap[g][order.status]++;
+    }
+    const galleries = Object.entries(galleryMap)
+      .map(([name, counts]) => ({ name, ...counts }))
+      .sort((a, b) => b.unprocessed - a.unprocessed || b.total - a.total);
+
+    // Order volume by day (last 14 days)
+    const volumeByDay = [];
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(todayStart);
+      d.setDate(d.getDate() - i);
+      const dayStr = d.toISOString().split('T')[0];
+      const dayEnd = new Date(d); dayEnd.setDate(dayEnd.getDate() + 1);
+      const fetched = allOrders.filter(o => o.fetchedAt && new Date(o.fetchedAt) >= d && new Date(o.fetchedAt) < dayEnd).length;
+      const processedDay = allOrders.filter(o => o.processedAt && new Date(o.processedAt) >= d && new Date(o.processedAt) < dayEnd).length;
+      const shippedDay = allOrders.filter(o => o.shippedAt && new Date(o.shippedAt) >= d && new Date(o.shippedAt) < dayEnd).length;
+      volumeByDay.push({ date: dayStr, label: `${d.getMonth() + 1}/${d.getDate()}`, fetched, processed: processedDay, shipped: shippedDay });
+    }
+
+    // Recent orders (last 10 processed/shipped)
+    const recentOrders = allOrders
+      .filter(o => o.processedAt)
+      .sort((a, b) => new Date(b.processedAt) - new Date(a.processedAt))
+      .slice(0, 10)
+      .map(o => ({
+        orderNum: o.orderNum,
+        orderId: o.orderId,
+        gallery: o.gallery,
+        status: o.status,
+        isBulk: o.isBulk,
+        processedAt: o.processedAt,
+        shippedAt: o.shippedAt,
+        itemCount: o.items?.length || 0,
+      }));
+
+    res.json({
+      counts: { unprocessed: unprocessed.length, processed: processed.length, shipped: shipped.length, total: allOrders.length },
+      throughput: { today: processedToday, thisWeek: processedThisWeek, thisMonth: processedThisMonth },
+      avgProcessTimeMs,
+      totalImages,
+      totalImagesThisWeek,
+      specialtyPending,
+      productBreakdown,
+      galleries,
+      volumeByDay,
+      recentOrders,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── LIST ORDERS BY STATUS ──────────────────────────────────
 router.get('/unprocessed', async (req, res) => {
   try {
