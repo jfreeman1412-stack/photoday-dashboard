@@ -97,6 +97,12 @@ class ApiService {
   getCarriers() { return this._fetch('/shipstation/carriers'); }
 
   // ─── SETTINGS ───────────────────────────────────────────
+  // Path settings
+  getPathSettings() { return this._fetch('/settings/paths'); }
+  updatePathSettings(paths) {
+    return this._fetch('/settings/paths', { method: 'PUT', body: JSON.stringify(paths) });
+  }
+
   getTemplateMappings() { return this._fetch('/settings/template-mappings'); }
   addTemplateMapping(mapping) {
     return this._fetch('/settings/template-mappings', { method: 'POST', body: JSON.stringify(mapping) });

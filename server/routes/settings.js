@@ -3,6 +3,40 @@ const router = express.Router();
 const darkroomService = require('../services/darkroomService');
 const printSheetService = require('../services/printSheetService');
 const config = require('../config');
+const pathConfig = require('../config/pathConfig');
+
+// ─── PATH SETTINGS ────────────────────────────────────────────
+
+router.get('/paths', async (req, res) => {
+  try {
+    const overrides = await pathConfig.getOverrides();
+    res.json({
+      downloadBase: config.paths.downloadBase,
+      darkroomTemplateBase: config.paths.darkroomTemplateBase,
+      txtOutput: config.paths.txtOutput,
+      overrides,
+      variables: pathConfig.getVariables(),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/paths', async (req, res) => {
+  try {
+    const overrides = await pathConfig.setOverrides(req.body);
+    config.reloadPaths();
+    res.json({
+      success: true,
+      downloadBase: config.paths.downloadBase,
+      darkroomTemplateBase: config.paths.darkroomTemplateBase,
+      txtOutput: config.paths.txtOutput,
+      overrides,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 // ─── TEMPLATE MAPPINGS ──────────────────────────────────────
 

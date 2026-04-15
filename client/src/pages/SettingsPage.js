@@ -44,6 +44,9 @@ export default function SettingsPage() {
   const [newSpecialty, setNewSpecialty] = useState({ externalId: '', productName: '', subfolder: '' });
   const [highlightColors, setHighlightColors] = useState({ specialty: '#FFF3CD', quantity: '#D4EDDA' });
 
+  // Path settings
+  const [pathSettings, setPathSettings] = useState({ downloadBase: '', darkroomTemplateBase: '', txtOutput: '' });
+
   const clearMessages = () => { setError(null); setSuccess(null); };
 
   // ─── Load data ──────────────────────────────────────────
@@ -89,7 +92,20 @@ export default function SettingsPage() {
     } catch (err) { /* silent */ }
   }, []);
 
-  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty]);
+  const loadPaths = useCallback(async () => {
+    try {
+      const data = await api.getPathSettings();
+      // Use the raw overrides for editing (with variables like {date} intact)
+      // Fall back to the resolved effective paths if no override is set
+      setPathSettings({
+        downloadBase: data.overrides?.downloadBase || data.downloadBase || '',
+        darkroomTemplateBase: data.overrides?.darkroomTemplateBase || data.darkroomTemplateBase || '',
+        txtOutput: data.overrides?.txtOutput || data.txtOutput || '',
+      });
+    } catch (err) { /* silent */ }
+  }, []);
+
+  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); loadPaths(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty, loadPaths]);
 
   // ─── Layout form helpers ────────────────────────────────
   const updateField = (field, value) => setLayoutForm(prev => ({ ...prev, [field]: value }));
@@ -227,6 +243,20 @@ export default function SettingsPage() {
     catch (err) { setError(err.message); }
   };
 
+  // ─── Path Settings ──────────────────────────────────────
+  const savePathSettings = async () => {
+    clearMessages();
+    try {
+      const result = await api.updatePathSettings(pathSettings);
+      setPathSettings({
+        downloadBase: result.downloadBase || '',
+        darkroomTemplateBase: result.darkroomTemplateBase || '',
+        txtOutput: result.txtOutput || '',
+      });
+      setSuccess('Path settings saved. Restart the server for changes to take full effect.');
+    } catch (err) { setError(err.message); }
+  };
+
   // ─── Specialty Products ─────────────────────────────────
   const addSpecialty = async () => {
     if (!newSpecialty.externalId || !newSpecialty.productName) { setError('External ID and product name required'); return; }
@@ -308,6 +338,7 @@ export default function SettingsPage() {
         <button className={`tab ${activeSection === 'folders' ? 'active' : ''}`} onClick={() => setActiveSection('folders')}>Folder Sort</button>
         <button className={`tab ${activeSection === 'templates' ? 'active' : ''}`} onClick={() => setActiveSection('templates')}>Darkroom Templates</button>
         <button className={`tab ${activeSection === 'filename' ? 'active' : ''}`} onClick={() => setActiveSection('filename')}>Filename Config</button>
+        <button className={`tab ${activeSection === 'paths' ? 'active' : ''}`} onClick={() => setActiveSection('paths')}>Paths</button>
       </div>
 
       {/* ═══ IMPOSITION ══════════════════════════════════════ */}
@@ -1156,6 +1187,109 @@ export default function SettingsPage() {
             <input className="form-input" value={fileNameConfig.extension} onChange={(e) => setFileNameConfig({ ...fileNameConfig, extension: e.target.value })} />
           </div>
           <button className="btn btn-primary" onClick={saveFileNameConfig}>Save</button>
+        </div>
+      )}
+      {/* ═══ PATHS ═══════════════════════════════════════════ */}
+      {activeSection === 'paths' && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">File Paths</h3>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+            Configure where processed files are saved. These override the .env file values. Leave blank to use the .env defaults. You can use variables like {'{date}'} to create dynamic folder structures.
+          </p>
+
+          {/* Available variables */}
+          <div style={{ marginBottom: 20, padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)' }}>
+            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>Available Variables</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[
+                { token: '{date}', desc: 'YYYY-MM-DD' },
+                { token: '{year}', desc: 'Year' },
+                { token: '{month}', desc: 'Month (01-12)' },
+                { token: '{day}', desc: 'Day (01-31)' },
+                { token: '{month_name}', desc: 'Month name' },
+                { token: '{day_of_week}', desc: 'Day name' },
+              ].map(v => (
+                <span key={v.token} style={{
+                  padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 11,
+                  background: 'var(--accent)', color: '#fff', cursor: 'default',
+                }} title={v.desc}>
+                  {v.token}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Download Base Path</label>
+            <input className="form-input" value={pathSettings.downloadBase}
+              onChange={(e) => setPathSettings({ ...pathSettings, downloadBase: e.target.value })}
+              placeholder="e.g., C:\SportslinePhotos\{date}" />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              Root folder where all order images, txt files, and packing slips are saved.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Darkroom Template Base Path</label>
+            <input className="form-input" value={pathSettings.darkroomTemplateBase}
+              onChange={(e) => setPathSettings({ ...pathSettings, darkroomTemplateBase: e.target.value })}
+              placeholder="e.g., X:\Templates\Borders\sportsline borders" />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              Base folder for Darkroom .crd template files.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">TXT Output Path</label>
+            <input className="form-input" value={pathSettings.txtOutput}
+              onChange={(e) => setPathSettings({ ...pathSettings, txtOutput: e.target.value })}
+              placeholder="e.g., C:\SportslinePhotos\Orders" />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              Fallback folder for Darkroom txt files (used only if order folder sort is not configured).
+            </div>
+          </div>
+
+          {/* Live resolved preview */}
+          {(pathSettings.downloadBase || pathSettings.darkroomTemplateBase || pathSettings.txtOutput) && (
+            <div style={{ marginBottom: 20, padding: 14, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Resolved Preview (today)</div>
+              {(() => {
+                const now = new Date();
+                const yyyy = now.getFullYear().toString();
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                const dd = String(now.getDate()).padStart(2, '0');
+                const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+                const resolve = (s) => s ? s
+                  .replace(/\{date\}/g, `${yyyy}-${mm}-${dd}`)
+                  .replace(/\{year\}/g, yyyy)
+                  .replace(/\{month\}/g, mm)
+                  .replace(/\{day\}/g, dd)
+                  .replace(/\{month_name\}/g, monthNames[now.getMonth()])
+                  .replace(/\{day_of_week\}/g, dayNames[now.getDay()])
+                  : '';
+                return (
+                  <div style={{ fontFamily: 'monospace', fontSize: 11, lineHeight: 1.8 }}>
+                    {pathSettings.downloadBase && (
+                      <div><span style={{ color: 'var(--text-muted)' }}>Download:</span> <span style={{ color: 'var(--accent)' }}>{resolve(pathSettings.downloadBase)}</span></div>
+                    )}
+                    {pathSettings.darkroomTemplateBase && (
+                      <div><span style={{ color: 'var(--text-muted)' }}>Templates:</span> <span style={{ color: 'var(--accent)' }}>{resolve(pathSettings.darkroomTemplateBase)}</span></div>
+                    )}
+                    {pathSettings.txtOutput && (
+                      <div><span style={{ color: 'var(--text-muted)' }}>TXT Output:</span> <span style={{ color: 'var(--accent)' }}>{resolve(pathSettings.txtOutput)}</span></div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          <button className="btn btn-primary" onClick={savePathSettings}>
+            Save Path Settings
+          </button>
         </div>
       )}
     </div>
