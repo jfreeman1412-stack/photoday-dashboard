@@ -1,4 +1,4 @@
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
+const API_BASE = process.env.REACT_APP_API_URL || `http://${window.location.hostname}:3001/api`;
 
 class ApiService {
   async _fetch(endpoint, options = {}) {

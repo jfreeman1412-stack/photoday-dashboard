@@ -261,6 +261,32 @@
       "centerOnSheet": false,
       "marginLeft": 3,
       "marginTop": 1.5
+    },
+    {
+      "id": "b6b5351d-5848-4eb7-bc1f-66d468740aa1",
+      "name": "4 - 3.5x5",
+      "cols": 2,
+      "rows": 2,
+      "itemWidth": 3.5,
+      "itemHeight": 5,
+      "sheetWidth": 8,
+      "sheetHeight": 10,
+      "dpi": 300,
+      "colGap": 0.01,
+      "rowGap": 0.01,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": [
+        {
+          "text": "{order_id}-{first_name} {last_name} {item_description}",
+          "x": 7.2,
+          "y": 7.7,
+          "fontSize": 10,
+          "color": "#000000",
+          "rotation": -90
+        }
+      ]
     }
   ],
   "mappings": [
@@ -303,6 +329,10 @@
     {
       "externalId": "33",
       "layoutId": "f1cb8db4-b03f-4a72-bb6c-26d1e1620a8e"
+    },
+    {
+      "externalId": "27",
+      "layoutId": "b6b5351d-5848-4eb7-bc1f-66d468740aa1"
     }
   ]
 }
