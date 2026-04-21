@@ -39,6 +39,12 @@ class ApiService {
   processOrderByNum(orderNum, options = {}) {
     return this._fetch(`/orders/process/${orderNum}`, { method: 'POST', body: JSON.stringify(options) });
   }
+  reprocessOrder(orderNum) {
+    return this._fetch(`/orders/reprocess/${orderNum}`, { method: 'POST', body: '{}' });
+  }
+  updateOrderData(orderNum, orderData) {
+    return this._fetch(`/orders/${orderNum}/update-data`, { method: 'PUT', body: JSON.stringify(orderData) });
+  }
   processAllOrders(options = {}) {
     return this._fetch('/orders/process-all', { method: 'POST', body: JSON.stringify(options) });
   }

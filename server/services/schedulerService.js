@@ -73,20 +73,27 @@ class SchedulerService {
       const orders = await photodayService.getOrders();
 
       let newCount = 0;
+      let updatedCount = 0;
       for (const order of orders) {
         const exists = await orderDatabase.hasOrder(order.num);
         if (!exists) {
           await orderDatabase.saveOrder(order, 'unprocessed');
           newCount++;
+        } else {
+          // Always update orderData to keep asset URLs fresh
+          await orderDatabase.saveOrder(order, 'unprocessed');
+          updatedCount++;
+          console.log(`[Scheduler] Updated asset URLs for existing order ${order.num}`);
         }
       }
 
       await orderDatabase.updateLastFetch();
-      console.log(`[Scheduler] Fetched ${orders.length} orders, ${newCount} new`);
+      console.log(`[Scheduler] Fetched ${orders.length} orders, ${newCount} new, ${updatedCount} updated`);
 
       return {
         fetched: orders.length,
         newOrders: newCount,
+        newCount, // alias for dashboard
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
@@ -130,17 +137,29 @@ class SchedulerService {
       }
 
       console.log(`[Scheduler] Checking ShipStation for ${processedOrders.length} processed orders...`);
+      console.log(`[Scheduler] Looking for order numbers: ${processedOrders.map(o => o.orderNum).join(', ')}`);
 
       // Check ShipStation for shipped orders
+      // Only look at orders shipped in the last 7 days, sorted newest first
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const shipDateStart = sevenDaysAgo.toISOString().split('T')[0];
+
       const ssResult = await shipstationService.listOrders({
         orderStatus: 'shipped',
         pageSize: 100,
+        sortBy: 'ModifyDate',
+        sortDir: 'DESC',
+        modifyDateStart: shipDateStart,
       });
 
       if (!ssResult?.orders) {
+        console.log(`[Scheduler] ShipStation returned no orders`);
         this.isCheckingShipments = false;
         return;
       }
+
+      console.log(`[Scheduler] ShipStation returned ${ssResult.orders.length} shipped orders`);
 
       // Build a map of ShipStation shipped orders by orderNumber
       const shippedMap = new Map();
@@ -150,10 +169,15 @@ class SchedulerService {
         }
       }
 
+      console.log(`[Scheduler] ShipStation shipped order numbers: ${[...shippedMap.keys()].join(', ')}`);
+
       // Match against our processed orders
       for (const localOrder of processedOrders) {
         const ssOrder = shippedMap.get(localOrder.orderNum);
-        if (!ssOrder) continue;
+        if (!ssOrder) {
+          console.log(`[Scheduler] No ShipStation match for ${localOrder.orderNum}`);
+          continue;
+        }
 
         // Found a shipped order! Extract tracking info if available
         const shipments = ssOrder.shipments || [];
@@ -211,12 +235,41 @@ class SchedulerService {
   async processOrder(orderNum, options = {}) {
     const localOrder = await orderDatabase.getOrder(orderNum);
     if (!localOrder) throw new Error(`Order ${orderNum} not found`);
-    if (localOrder.status !== 'unprocessed') throw new Error(`Order ${orderNum} is already ${localOrder.status}`);
+
+    // Allow reprocessing if explicitly requested
+    if (localOrder.status !== 'unprocessed' && !options.reprocess) {
+      throw new Error(`Order ${orderNum} is already ${localOrder.status}`);
+    }
 
     const order = localOrder.orderData;
 
+    // Log asset URLs being used
+    for (const item of order.items || []) {
+      for (const img of item.images || []) {
+        console.log(`[Scheduler] Image URL for ${img.filename}: ${img.assetUrl}`);
+      }
+    }
+
     // 1. Download images
-    const downloadResult = await fileService.downloadOrderImages(order, options);
+    let downloadResult;
+    try {
+      downloadResult = await fileService.downloadOrderImages(order, options);
+      if (downloadResult.errorCount > 0 && downloadResult.successCount === 0) {
+        console.warn(`[Scheduler] All image downloads failed for ${orderNum} — asset URLs may have expired`);
+        if (localOrder.downloadPath) {
+          console.log(`[Scheduler] Using previously downloaded images at: ${localOrder.downloadPath}`);
+          downloadResult.orderDir = localOrder.downloadPath;
+        }
+      }
+    } catch (dlError) {
+      console.error(`[Scheduler] Download error for ${orderNum}: ${dlError.message}`);
+      if (localOrder.downloadPath) {
+        console.log(`[Scheduler] Falling back to previous download path: ${localOrder.downloadPath}`);
+        downloadResult = { orderDir: localOrder.downloadPath, downloaded: [], errors: [], successCount: 0, errorCount: 0 };
+      } else {
+        throw dlError;
+      }
+    }
 
     // 2. Apply imposition rules (e.g., 8 wallets on 8x10 sheet)
     //    This replaces original images with composed sheets where applicable
@@ -242,11 +295,19 @@ class SchedulerService {
     }
 
     // 4. Generate Darkroom txt (packing slip is first print item at 5x8)
-    const txtResult = await darkroomService.processOrder(order, {
-      ...options,
-      orderDir: downloadResult.orderDir,
-      packingSlipPath: packingSlipResult?.filePath || null,
-    });
+    let txtResult = null;
+    try {
+      console.log(`[Scheduler] Starting Darkroom txt for ${orderNum}, orderDir: ${downloadResult.orderDir}`);
+      txtResult = await darkroomService.processOrder(order, {
+        ...options,
+        orderDir: downloadResult.orderDir,
+        packingSlipPath: packingSlipResult?.filePath || null,
+      });
+      console.log(`[Scheduler] Darkroom txt generated for ${orderNum}: ${txtResult.filePath}`);
+    } catch (txtError) {
+      console.error(`[Scheduler] Darkroom txt error for ${orderNum}:`, txtError.message, txtError.stack);
+      txtResult = { error: txtError.message };
+    }
 
     // 5. Create order in ShipStation (awaiting_shipment — label not purchased)
     let shipstationResult = null;
@@ -260,11 +321,15 @@ class SchedulerService {
     }
 
     // 6. Mark as processed in PhotoDay
-    await photodayService.markAsProcessed(orderNum);
+    try {
+      await photodayService.markAsProcessed(orderNum);
+    } catch (pdErr) {
+      console.warn(`[Scheduler] PhotoDay mark processed for ${orderNum}: ${pdErr.message}`);
+    }
 
     // 7. Update local database
     await orderDatabase.markProcessed(orderNum, {
-      txtFile: txtResult.filePath,
+      txtFile: txtResult?.filePath || null,
       packingSlip: packingSlipResult?.filePath || null,
       downloadPath: downloadResult.orderDir,
       shipstationOrderId: shipstationResult?.orderId || null,

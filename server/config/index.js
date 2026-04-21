@@ -55,9 +55,12 @@ module.exports = {
     baseUrl: process.env.SHIPSTATION_API_BASE_URL || 'https://ssapi.shipstation.com',
   },
 
-  // Paths are resolved with variables each time they're accessed
+  // Paths — return raw paths with variables intact.
+  // Date-only variables are resolved here; order variables ({gallery}, {order_id}, {studio})
+  // are resolved by fileService when the order context is available.
   paths: {
-    get downloadBase() { return resolvePath(rawPaths.downloadBase); },
+    get downloadBase() { return rawPaths.downloadBase; },
+    get downloadBaseResolved() { return resolvePath(rawPaths.downloadBase); },
     get darkroomTemplateBase() { return resolvePath(rawPaths.darkroomTemplateBase); },
     get txtOutput() { return resolvePath(rawPaths.txtOutput); },
   },

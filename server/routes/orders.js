@@ -193,6 +193,43 @@ router.post('/fetch', async (req, res) => {
   }
 });
 
+// ─── UPDATE ORDER DATA (refresh asset URLs) ──────────────────
+router.put('/:orderNum/update-data', async (req, res) => {
+  try {
+    const { orderNum } = req.params;
+    const orderData = req.body;
+
+    if (!orderData || !orderData.items) {
+      return res.status(400).json({ error: 'Valid order JSON with items required' });
+    }
+
+    // Update the stored order data with fresh URLs
+    await orderDatabase.updateOrder(orderNum, {
+      orderData,
+      items: (orderData.items || []).map(item => ({
+        description: item.description,
+        externalId: item.externalId,
+        quantity: item.quantity,
+        imageCount: item.images?.length || 0,
+      })),
+    });
+
+    console.log(`[Orders] Updated order data for ${orderNum} with fresh asset URLs`);
+
+    // Try to download images with the fresh URLs
+    try {
+      const downloadResult = await fileService.downloadOrderImages(orderData, { forceRedownload: true });
+      console.log(`[Orders] Downloaded ${downloadResult.successCount} images for ${orderNum}`);
+      await orderDatabase.updateOrder(orderNum, { downloadPath: downloadResult.orderDir });
+      res.json({ success: true, orderNum, downloads: downloadResult.successCount, errors: downloadResult.errorCount });
+    } catch (dlError) {
+      res.json({ success: true, orderNum, message: 'Order data updated but image download failed: ' + dlError.message });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── AUTO-FETCH SETTINGS ────────────────────────────────────
 router.get('/settings/auto-fetch', async (req, res) => {
   try {
@@ -219,6 +256,20 @@ router.put('/settings/auto-fetch', async (req, res) => {
 router.post('/process/:orderNum', async (req, res) => {
   try {
     const result = await schedulerService.processOrder(req.params.orderNum, req.body);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reprocess an order (re-download images, re-generate txt, etc.)
+router.post('/reprocess/:orderNum', async (req, res) => {
+  try {
+    const result = await schedulerService.processOrder(req.params.orderNum, {
+      ...req.body,
+      reprocess: true,
+      forceRedownload: true,
+    });
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });

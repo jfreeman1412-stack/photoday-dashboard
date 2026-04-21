@@ -236,12 +236,13 @@ class DarkroomService {
    * @param {object} options - { orderDir, packingSlipPath }
    */
   async processOrder(order, options = {}) {
+    console.log(`[Darkroom] Processing order ${order.num}...`);
     const customerName = photodayService.getCustomerName(order);
+    console.log(`[Darkroom] Customer: ${customerName.firstName} ${customerName.lastName}`);
 
-    // orderDir is the folder where images were downloaded (from fileService)
     const orderDir = options.orderDir || path.join(config.paths.downloadBase, order.num);
+    console.log(`[Darkroom] OrderDir: ${orderDir}`);
 
-    // Build line items from order items
     const lineItems = [];
 
     // Packing slip as the FIRST print item (5x8)
@@ -252,18 +253,38 @@ class DarkroomService {
         templatePath: null,
         filePath: options.packingSlipPath,
       });
+      console.log(`[Darkroom] Added packing slip: ${options.packingSlipPath}`);
     }
 
-    // Process each order item (skip specialty items — they don't go through Darkroom)
+    // Process each order item
     for (const item of order.items || []) {
-      const isSpecialty = await specialtyService.isSpecialty(item.externalId);
-      if (isSpecialty) {
-        console.log(`[Darkroom] Skipping specialty item: ${item.description} (externalId: ${item.externalId})`);
-        continue;
+      console.log(`[Darkroom] Processing item: ${item.description} (externalId: ${item.externalId})`);
+
+      try {
+        const isSpecialty = await specialtyService.isSpecialty(item.externalId);
+        if (isSpecialty) {
+          console.log(`[Darkroom] Skipping specialty item: ${item.description}`);
+          continue;
+        }
+      } catch (specErr) {
+        console.error(`[Darkroom] Specialty check error: ${specErr.message}`);
       }
 
-      const templatePath = await this.findTemplate(item);
-      const size = await this._getSize(item);
+      let templatePath = null;
+      try {
+        templatePath = await this.findTemplate(item);
+      } catch (tmplErr) {
+        console.error(`[Darkroom] Template lookup error: ${tmplErr.message}`);
+      }
+
+      let size = '0x0';
+      try {
+        size = await this._getSize(item);
+      } catch (sizeErr) {
+        console.error(`[Darkroom] Size lookup error: ${sizeErr.message}`);
+      }
+
+      console.log(`[Darkroom] Item: ${item.description}, size: ${size}, template: ${templatePath || 'none'}`);
 
       for (const image of item.images || []) {
         const imagePath = path.join(orderDir, image.filename || `${image.id}.jpg`);
@@ -276,7 +297,8 @@ class DarkroomService {
       }
     }
 
-    // Build order data for txt generation
+    console.log(`[Darkroom] Total line items: ${lineItems.length}`);
+
     const orderData = {
       firstName: customerName.firstName,
       lastName: customerName.lastName,
@@ -286,8 +308,9 @@ class DarkroomService {
       lineItems,
     };
 
-    // Write the txt file in the SAME folder as the images
+    console.log(`[Darkroom] Writing txt file...`);
     const result = await this.writeTxtFile(orderData, orderDir);
+    console.log(`[Darkroom] Txt file written: ${result.filePath}`);
 
     return {
       ...result,

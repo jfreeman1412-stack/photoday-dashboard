@@ -369,11 +369,37 @@ export default function OrdersPage() {
                       </button>
                     )}
                     {status === 'processed' && (
-                      <button className="btn btn-sm btn-success" onClick={() => {
-                        setShipOrderNum(order.orderNum);
-                        setActiveTab('ship-modal');
-                      }}>
-                        Ship
+                      <>
+                        <button className="btn btn-sm btn-success" onClick={() => {
+                          setShipOrderNum(order.orderNum);
+                          setActiveTab('ship-modal');
+                        }}>
+                          Ship
+                        </button>
+                        <button className="btn btn-sm btn-secondary" onClick={async () => {
+                          clearMessages(); setLoading(true);
+                          try {
+                            await api.reprocessOrder(order.orderNum);
+                            setSuccess(`Reprocessed ${order.orderNum}`);
+                            await loadCounts(); await loadOrders('processed');
+                          } catch (err) { setError(err.message); }
+                          finally { setLoading(false); }
+                        }} disabled={loading} title="Re-download images and regenerate files">
+                          Reprocess
+                        </button>
+                      </>
+                    )}
+                    {status === 'shipped' && (
+                      <button className="btn btn-sm btn-secondary" onClick={async () => {
+                        clearMessages(); setLoading(true);
+                        try {
+                          await api.reprocessOrder(order.orderNum);
+                          setSuccess(`Reprocessed ${order.orderNum}`);
+                          await loadCounts(); await loadOrders('shipped');
+                        } catch (err) { setError(err.message); }
+                        finally { setLoading(false); }
+                      }} disabled={loading} title="Re-download images and regenerate files">
+                        Reprocess
                       </button>
                     )}
                   </div>

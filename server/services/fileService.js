@@ -18,22 +18,28 @@ class FileService {
 
   /**
    * Build the output folder path for an order based on the folder sort settings.
-   * Uses the configurable sort hierarchy (e.g., Gallery > Order ID).
+   * Resolves order-specific path variables like {gallery} in the base path.
    *
    * @param {object} order - PDX order object
    * @param {object} options - { downloadPath, sortLevels (override) }
    * @returns {string} Full folder path for this order's files
    */
   async getOrderDir(order, options = {}) {
-    const baseDir = options.downloadPath || config.paths.downloadBase;
+    let baseDir = options.downloadPath || config.paths.downloadBase;
+
+    // Resolve order-specific variables in the base path ({gallery}, {order_id}, {studio})
+    const pathConfig = require('../config/pathConfig');
+    baseDir = pathConfig.resolvePath(baseDir, {
+      gallery: order.gallery,
+      orderNum: order.num,
+      studioName: order.studio?.name,
+    });
 
     if (options.sortLevels) {
-      // Use override sort levels (from shortcut buttons)
       const segments = folderSortService._buildPathFromLevels(order, options.sortLevels);
       return path.join(baseDir, ...segments);
     }
 
-    // Use global setting
     return folderSortService.getFullOrderPath(order, baseDir);
   }
 
@@ -45,13 +51,18 @@ class FileService {
     const orderDir = await this.getOrderDir(order, options);
     await fs.ensureDir(orderDir);
 
+    console.log(`[FileService] Downloading images for ${order.num} → ${orderDir}`);
+
     const images = photodayService.extractOrderImages(order);
+    console.log(`[FileService] Found ${images.length} image(s) to download`);
+
     const downloaded = [];
     const specialtyDownloaded = [];
     const errors = [];
 
     for (const img of images) {
       if (!img.assetUrl) {
+        console.warn(`[FileService] No assetUrl for ${img.filename}`);
         errors.push({ filename: img.filename, error: 'No assetUrl available' });
         continue;
       }
@@ -72,6 +83,7 @@ class FileService {
         }
 
         if (await fs.pathExists(savePath) && !options.forceRedownload) {
+          console.log(`[FileService] Skipping (exists): ${filename}`);
           const entry = {
             filename, path: savePath,
             itemDescription: img.itemDescription, quantity: img.quantity,
@@ -83,22 +95,22 @@ class FileService {
         }
 
         await this.downloadImage(img.assetUrl, savePath);
+        console.log(`[FileService] Downloaded: ${filename}${isSpecialty ? ' (specialty)' : ''}`);
         const entry = {
           filename, path: savePath,
           itemDescription: img.itemDescription, quantity: img.quantity,
           orientation: img.orientation, itemExternalId: img.itemExternalId,
           groupId: img.groupId, isSpecialty, skipped: false,
         };
-        if (isSpecialty) {
-          specialtyDownloaded.push(entry);
-          console.log(`[FileService] Specialty item → ${savePath}`);
-        } else {
-          downloaded.push(entry);
-        }
+        if (isSpecialty) specialtyDownloaded.push(entry);
+        else downloaded.push(entry);
       } catch (error) {
+        console.error(`[FileService] Download error for ${img.filename}: ${error.message}`);
         errors.push({ filename: img.filename, assetUrl: img.assetUrl, error: error.message });
       }
     }
+
+    console.log(`[FileService] Complete: ${downloaded.length} regular, ${specialtyDownloaded.length} specialty, ${errors.length} errors`);
 
     return {
       orderNum: order.num,

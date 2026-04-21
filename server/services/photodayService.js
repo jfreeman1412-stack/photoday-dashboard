@@ -107,9 +107,15 @@ class PhotoDayService {
    * Download a print-ready asset from its URL (expires after 30 days).
    */
   async downloadAsset(assetUrl) {
+    // Use the URL as-is — don't decode/re-encode to avoid malformed URI errors
+    const filename = assetUrl.substring(assetUrl.lastIndexOf('/') + 1).split('?')[0];
+    console.log(`[PhotoDay] Downloading: ${decodeURIComponent(filename)}`);
+    
     const response = await axios.get(assetUrl, {
       responseType: 'arraybuffer',
       timeout: 60000,
+      // Prevent axios from re-encoding the URL
+      paramsSerializer: { encode: (param) => param },
     });
     return Buffer.from(response.data);
   }
