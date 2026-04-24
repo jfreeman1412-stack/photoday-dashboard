@@ -1,11 +1,19 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../services/api';
 
-export default function SettingsPage() {
+export default function SettingsPage({ user }) {
   const [activeSection, setActiveSection] = useState('imposition');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+
+  // Users
+  const [users, setUsers] = useState([]);
+  const [showNewUser, setShowNewUser] = useState(false);
+  const [newUser, setNewUser] = useState({ username: '', password: '', displayName: '', role: 'operator' });
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [editPassword, setEditPassword] = useState('');
+  const isAdmin = user?.role === 'admin';
 
   // Imposition
   const [layouts, setLayouts] = useState([]);
@@ -123,7 +131,15 @@ export default function SettingsPage() {
     } catch (err) { /* silent */ }
   }, []);
 
-  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); loadPaths(); loadAppSettings(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty, loadPaths, loadAppSettings]);
+  const loadUsers = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const data = await api.getUsers();
+      setUsers(data.users || []);
+    } catch (err) { /* silent */ }
+  }, [isAdmin]);
+
+  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); loadPaths(); loadAppSettings(); loadUsers(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty, loadPaths, loadAppSettings, loadUsers]);
 
   // ─── Layout form helpers ────────────────────────────────
   const updateField = (field, value) => setLayoutForm(prev => ({ ...prev, [field]: value }));
@@ -376,7 +392,8 @@ export default function SettingsPage() {
         <button className={`tab ${activeSection === 'templates' ? 'active' : ''}`} onClick={() => setActiveSection('templates')}>Darkroom Templates</button>
         <button className={`tab ${activeSection === 'filename' ? 'active' : ''}`} onClick={() => setActiveSection('filename')}>Filename Config</button>
         <button className={`tab ${activeSection === 'paths' ? 'active' : ''}`} onClick={() => setActiveSection('paths')}>Paths</button>
-        <button className={`tab ${activeSection === 'setup' ? 'active' : ''}`} onClick={() => setActiveSection('setup')}>Setup</button>
+        {isAdmin && <button className={`tab ${activeSection === 'setup' ? 'active' : ''}`} onClick={() => setActiveSection('setup')}>Setup</button>}
+        {isAdmin && <button className={`tab ${activeSection === 'users' ? 'active' : ''}`} onClick={() => setActiveSection('users')}>Users</button>}
       </div>
 
       {/* ═══ IMPOSITION ══════════════════════════════════════ */}
@@ -386,7 +403,10 @@ export default function SettingsPage() {
           <div className="card" style={{ marginBottom: 24 }}>
             <div className="card-header">
               <h3 className="card-title">Print Layouts</h3>
-              <button className="btn btn-primary btn-sm" onClick={() => { setLayoutForm({ ...emptyLayout }); setEditingLayout(null); setShowLayoutForm(true); }}>
+              <button className="btn btn-primary btn-sm" onClick={() => {
+                setLayoutForm({ ...emptyLayout }); setEditingLayout(null); setShowLayoutForm(true);
+                setTimeout(() => document.getElementById('layout-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+              }}>
                 + New Layout
               </button>
             </div>
@@ -426,7 +446,7 @@ export default function SettingsPage() {
 
           {/* Layout form */}
           {showLayoutForm && (
-            <div className="card" style={{ marginBottom: 24, border: '2px solid var(--accent)' }}>
+            <div id="layout-form" className="card" style={{ marginBottom: 24, border: '2px solid var(--accent)' }}>
               <h3 className="card-title" style={{ marginBottom: 16 }}>{editingLayout ? 'Edit Layout' : 'New Layout'}</h3>
 
               <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
@@ -1240,22 +1260,42 @@ export default function SettingsPage() {
           {/* Available variables */}
           <div style={{ marginBottom: 20, padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)' }}>
             <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>Available Variables</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {[
-                { token: '{date}', desc: 'YYYY-MM-DD' },
-                { token: '{year}', desc: 'Year' },
-                { token: '{month}', desc: 'Month (01-12)' },
-                { token: '{day}', desc: 'Day (01-31)' },
-                { token: '{month_name}', desc: 'Month name' },
-                { token: '{day_of_week}', desc: 'Day name' },
-              ].map(v => (
-                <span key={v.token} style={{
-                  padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 11,
-                  background: 'var(--accent)', color: '#fff', cursor: 'default',
-                }} title={v.desc}>
-                  {v.token}
-                </span>
-              ))}
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Date Variables</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[
+                  { token: '{date}', desc: 'YYYY-MM-DD' },
+                  { token: '{year}', desc: 'Year' },
+                  { token: '{month}', desc: 'Month (01-12)' },
+                  { token: '{day}', desc: 'Day (01-31)' },
+                  { token: '{month_name}', desc: 'Month name' },
+                  { token: '{day_of_week}', desc: 'Day name' },
+                ].map(v => (
+                  <span key={v.token} style={{
+                    padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 11,
+                    background: 'var(--accent)', color: '#fff', cursor: 'default',
+                  }} title={v.desc}>
+                    {v.token}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>Order Variables (resolved per order)</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[
+                  { token: '{gallery}', desc: 'Gallery name from the order' },
+                  { token: '{order_id}', desc: 'Order number' },
+                  { token: '{studio}', desc: 'Studio name' },
+                ].map(v => (
+                  <span key={v.token} style={{
+                    padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 11,
+                    background: '#50c878', color: '#fff', cursor: 'default',
+                  }} title={v.desc}>
+                    {v.token}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1292,7 +1332,7 @@ export default function SettingsPage() {
           {/* Live resolved preview */}
           {(pathSettings.downloadBase || pathSettings.darkroomTemplateBase || pathSettings.txtOutput) && (
             <div style={{ marginBottom: 20, padding: 14, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Resolved Preview (today)</div>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Resolved Preview (example order)</div>
               {(() => {
                 const now = new Date();
                 const yyyy = now.getFullYear().toString();
@@ -1307,6 +1347,9 @@ export default function SettingsPage() {
                   .replace(/\{day\}/g, dd)
                   .replace(/\{month_name\}/g, monthNames[now.getMonth()])
                   .replace(/\{day_of_week\}/g, dayNames[now.getDay()])
+                  .replace(/\{gallery\}/g, 'Spring Sports 2026')
+                  .replace(/\{order_id\}/g, 'SB1773428567')
+                  .replace(/\{studio\}/g, 'Sportsline Photography')
                   : '';
                 return (
                   <div style={{ fontFamily: 'monospace', fontSize: 11, lineHeight: 1.8 }}>
@@ -1319,6 +1362,9 @@ export default function SettingsPage() {
                     {pathSettings.txtOutput && (
                       <div><span style={{ color: 'var(--text-muted)' }}>TXT Output:</span> <span style={{ color: 'var(--accent)' }}>{resolve(pathSettings.txtOutput)}</span></div>
                     )}
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6, fontStyle: 'italic' }}>
+                      Using example: gallery="Spring Sports 2026", order="SB1773428567"
+                    </div>
                   </div>
                 );
               })()}
@@ -1331,7 +1377,7 @@ export default function SettingsPage() {
         </div>
       )}
       {/* ═══ SETUP (env overrides) ══════════════════════════════ */}
-      {activeSection === 'setup' && (
+      {activeSection === 'setup' && isAdmin && (
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Application Configuration</h3>
@@ -1416,6 +1462,192 @@ export default function SettingsPage() {
               Some changes (port, API credentials) require a server restart to take full effect.
             </span>
           </div>
+        </div>
+      )}
+      {/* ═══ USERS (admin only) ══════════════════════════════ */}
+      {activeSection === 'users' && isAdmin && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">User Management</h3>
+            <button className="btn btn-primary btn-sm" onClick={() => { setShowNewUser(!showNewUser); setNewUser({ username: '', password: '', displayName: '', role: 'operator' }); }}>
+              {showNewUser ? 'Cancel' : '+ New User'}
+            </button>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+            Manage who can access the dashboard. Admins can do everything. Operators can process and ship orders. Viewers can only see the dashboard.
+          </p>
+
+          {/* New user form */}
+          {showNewUser && (
+            <div style={{ padding: 16, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', marginBottom: 20, border: '1px solid var(--border-light)' }}>
+              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Create New User</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div className="form-group" style={{ marginBottom: 0, flex: '1 1 140px' }}>
+                  <label className="form-label">Username</label>
+                  <input className="form-input" value={newUser.username}
+                    onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                    placeholder="e.g., jsmith" />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, flex: '1 1 140px' }}>
+                  <label className="form-label">Password</label>
+                  <input className="form-input" type="password" value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                    placeholder="Enter password" />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, flex: '1 1 160px' }}>
+                  <label className="form-label">Display Name</label>
+                  <input className="form-input" value={newUser.displayName}
+                    onChange={(e) => setNewUser({ ...newUser, displayName: e.target.value })}
+                    placeholder="e.g., John Smith" />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, flex: '0 0 130px' }}>
+                  <label className="form-label">Role</label>
+                  <select className="form-input" value={newUser.role}
+                    onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}>
+                    <option value="admin">Admin</option>
+                    <option value="operator">Operator</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+                <button className="btn btn-success btn-sm" disabled={loading || !newUser.username || !newUser.password}
+                  onClick={async () => {
+                    clearMessages(); setLoading(true);
+                    try {
+                      await api.createUser(newUser);
+                      setSuccess(`User "${newUser.username}" created`);
+                      setShowNewUser(false);
+                      setNewUser({ username: '', password: '', displayName: '', role: 'operator' });
+                      await loadUsers();
+                    } catch (err) { setError(err.message); }
+                    finally { setLoading(false); }
+                  }}>
+                  Create
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* User list */}
+          {users.length > 0 ? (
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr><th>Username</th><th>Display Name</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {users.map(u => {
+                    const isEditing = editingUserId === u.id;
+                    const roleBadge = {
+                      admin: { bg: 'rgba(220,53,69,0.15)', color: '#DC3545' },
+                      operator: { bg: 'rgba(33,150,243,0.15)', color: '#2196F3' },
+                      viewer: { bg: 'rgba(76,175,80,0.15)', color: '#4CAF50' },
+                    };
+                    const badge = roleBadge[u.role] || roleBadge.operator;
+
+                    return (
+                      <React.Fragment key={u.id}>
+                        <tr>
+                          <td className="mono" style={{ fontWeight: 600 }}>{u.username}</td>
+                          <td>{u.displayName || '—'}</td>
+                          <td>
+                            {isEditing ? (
+                              <select className="form-input" defaultValue={u.role} style={{ padding: '2px 6px', fontSize: 12, width: 100 }}
+                                onChange={async (e) => {
+                                  try {
+                                    await api.updateUser(u.id, { role: e.target.value });
+                                    setSuccess(`Role updated for ${u.username}`);
+                                    await loadUsers();
+                                  } catch (err) { setError(err.message); }
+                                }}>
+                                <option value="admin">Admin</option>
+                                <option value="operator">Operator</option>
+                                <option value="viewer">Viewer</option>
+                              </select>
+                            ) : (
+                              <span style={{ padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: 11, fontWeight: 600, background: badge.bg, color: badge.color, textTransform: 'uppercase' }}>
+                                {u.role}
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <span style={{ color: u.active ? 'var(--success)' : 'var(--text-muted)', fontSize: 12 }}>
+                              {u.active ? 'Active' : 'Disabled'}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                            {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : 'Never'}
+                          </td>
+                          <td>
+                            <div className="btn-group">
+                              <button className="btn btn-sm btn-secondary"
+                                onClick={() => setEditingUserId(isEditing ? null : u.id)}>
+                                {isEditing ? 'Done' : 'Edit'}
+                              </button>
+                              {u.username !== 'admin' && (
+                                <button className="btn btn-sm btn-danger"
+                                  onClick={async () => {
+                                    if (!window.confirm(`Disable user "${u.username}"?`)) return;
+                                    try {
+                                      await api.deleteUser(u.id);
+                                      setSuccess(`User "${u.username}" disabled`);
+                                      await loadUsers();
+                                    } catch (err) { setError(err.message); }
+                                  }}>
+                                  Disable
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                        {/* Password change row */}
+                        {isEditing && (
+                          <tr>
+                            <td colSpan="6" style={{ padding: '8px 14px', background: 'var(--bg-input)' }}>
+                              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                                <span style={{ fontSize: 12, fontWeight: 600 }}>Change password:</span>
+                                <input className="form-input" type="password" placeholder="New password"
+                                  value={editPassword} onChange={(e) => setEditPassword(e.target.value)}
+                                  style={{ width: 200, padding: '4px 8px', fontSize: 12 }} />
+                                <button className="btn btn-sm btn-primary" disabled={!editPassword}
+                                  onClick={async () => {
+                                    try {
+                                      await api.updateUser(u.id, { password: editPassword });
+                                      setSuccess(`Password updated for ${u.username}`);
+                                      setEditPassword('');
+                                    } catch (err) { setError(err.message); }
+                                  }}>
+                                  Update Password
+                                </button>
+                                {u.id === user?.id && (
+                                  <span style={{ fontSize: 11, color: 'var(--warning)' }}>This is your account</span>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
+                                <span style={{ fontSize: 12, fontWeight: 600 }}>Display name:</span>
+                                <input className="form-input" defaultValue={u.displayName}
+                                  style={{ width: 200, padding: '4px 8px', fontSize: 12 }}
+                                  onBlur={async (e) => {
+                                    if (e.target.value !== u.displayName) {
+                                      try {
+                                        await api.updateUser(u.id, { displayName: e.target.value });
+                                        setSuccess(`Display name updated for ${u.username}`);
+                                        await loadUsers();
+                                      } catch (err) { setError(err.message); }
+                                    }
+                                  }} />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No users found</div>
+          )}
         </div>
       )}
     </div>

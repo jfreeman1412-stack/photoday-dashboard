@@ -1,18 +1,88 @@
 const API_BASE = process.env.REACT_APP_API_URL || `http://${window.location.hostname}:3001/api`;
 
 class ApiService {
+  constructor() {
+    this.sessionId = localStorage.getItem('sessionId') || null;
+    this.onAuthError = null; // Callback for 401 errors
+  }
+
+  setSession(sessionId) {
+    this.sessionId = sessionId;
+    if (sessionId) {
+      localStorage.setItem('sessionId', sessionId);
+    } else {
+      localStorage.removeItem('sessionId');
+    }
+  }
+
+  getSession() {
+    return this.sessionId;
+  }
+
   async _fetch(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
-    const response = await fetch(url, {
-      headers: { 'Content-Type': 'application/json', ...options.headers },
-      ...options,
-    });
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
+
+    // Add session header if we have one
+    if (this.sessionId) {
+      headers['X-Session-Id'] = this.sessionId;
+    }
+
+    const response = await fetch(url, { headers, ...options });
+
+    if (response.status === 401) {
+      // Session expired or invalid
+      const error = await response.json().catch(() => ({}));
+      if (error.code === 'INVALID_SESSION' || error.code === 'NO_SESSION') {
+        this.setSession(null);
+        if (this.onAuthError) this.onAuthError();
+      }
+      throw new Error(error.error || 'Authentication required');
+    }
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: response.statusText }));
       throw new Error(error.error || `API Error: ${response.status}`);
     }
     if (response.headers.get('content-type')?.includes('image/')) return response.blob();
     return response.json();
+  }
+
+  // ─── AUTH ─────────────────────────────────────────────────
+  async login(username, password) {
+    const result = await this._fetch('/auth/login', {
+      method: 'POST', body: JSON.stringify({ username, password }),
+    });
+    this.setSession(result.sessionId);
+    return result;
+  }
+
+  async logout() {
+    try { await this._fetch('/auth/logout', { method: 'POST' }); } catch (e) { /* silent */ }
+    this.setSession(null);
+  }
+
+  async validateSession() {
+    if (!this.sessionId) return null;
+    try {
+      const result = await this._fetch('/auth/session');
+      return result.user;
+    } catch (e) {
+      this.setSession(null);
+      return null;
+    }
+  }
+
+  // User management
+  getUsers() { return this._fetch('/auth/users'); }
+  createUser(data) { return this._fetch('/auth/users', { method: 'POST', body: JSON.stringify(data) }); }
+  updateUser(id, data) { return this._fetch(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }); }
+  deleteUser(id) { return this._fetch(`/auth/users/${id}`, { method: 'DELETE' }); }
+
+  // Activity log
+  getActivityLog(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this._fetch(`/auth/activity${qs ? '?' + qs : ''}`);
   }
 
   // ─── ORDER MANAGEMENT ───────────────────────────────────

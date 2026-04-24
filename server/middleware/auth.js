@@ -5,21 +5,23 @@ const authService = require('../services/authService');
  * Validates the session from X-Session-Id header.
  * Attaches req.user if valid.
  */
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const sessionId = req.headers['x-session-id'];
 
   if (!sessionId) {
     return res.status(401).json({ error: 'Authentication required', code: 'NO_SESSION' });
   }
 
-  const user = authService.validateSession(sessionId);
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid or expired session', code: 'INVALID_SESSION' });
+  try {
+    const user = await authService.validateSession(sessionId);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid or expired session', code: 'INVALID_SESSION' });
+    }
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Authentication error', code: 'AUTH_ERROR' });
   }
-
-  // Attach user to request for downstream use
-  req.user = user;
-  next();
 }
 
 /**
@@ -40,13 +42,14 @@ function requireRole(...roles) {
 
 /**
  * Optional auth — attaches user if session exists, but doesn't block.
- * Useful for endpoints that work with or without auth.
  */
-function optionalAuth(req, res, next) {
+async function optionalAuth(req, res, next) {
   const sessionId = req.headers['x-session-id'];
   if (sessionId) {
-    const user = authService.validateSession(sessionId);
-    if (user) req.user = user;
+    try {
+      const user = await authService.validateSession(sessionId);
+      if (user) req.user = user;
+    } catch (err) { /* silent */ }
   }
   next();
 }
