@@ -93,6 +93,16 @@ class ApiService {
   getShippedOrders() { return this._fetch('/orders/shipped'); }
   getAllOrders() { return this._fetch('/orders/all'); }
   getOrder(orderNum) { return this._fetch(`/orders/${orderNum}`); }
+  getTeams(gallery = null) {
+    const qs = gallery ? `?gallery=${encodeURIComponent(gallery)}` : '';
+    return this._fetch(`/orders/meta/teams${qs}`);
+  }
+  getGallerySettings() { return this._fetch('/orders/meta/gallery-settings'); }
+  updateGallerySettings(gallery, enabled) {
+    return this._fetch('/orders/meta/gallery-settings', {
+      method: 'PUT', body: JSON.stringify({ gallery, enabled }),
+    });
+  }
 
   // Fetch new from PhotoDay
   fetchNewOrders() { return this._fetch('/orders/fetch', { method: 'POST' }); }

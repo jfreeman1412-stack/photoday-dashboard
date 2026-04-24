@@ -171,6 +171,55 @@ router.get('/all', async (req, res) => {
   }
 });
 
+// ─── TEAMS ──────────────────────────────────────────────────
+router.get('/meta/teams', async (req, res) => {
+  try {
+    const { gallery } = req.query;
+    const teams = await orderDatabase.getTeams(gallery || null);
+    res.json({ teams });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── GALLERY SETTINGS (team-enabled toggle) ─────────────────
+router.get('/meta/gallery-settings', async (req, res) => {
+  try {
+    const databaseService = require('../services/database');
+    const db = databaseService.getDb();
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'teamEnabledGalleries'").get();
+    const galleries = row ? JSON.parse(row.value) : [];
+    res.json({ teamEnabledGalleries: galleries });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/meta/gallery-settings', async (req, res) => {
+  try {
+    const { gallery, enabled } = req.body;
+    if (!gallery) return res.status(400).json({ error: 'Gallery name required' });
+
+    const databaseService = require('../services/database');
+    const db = databaseService.getDb();
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'teamEnabledGalleries'").get();
+    let galleries = row ? JSON.parse(row.value) : [];
+
+    if (enabled && !galleries.includes(gallery)) {
+      galleries.push(gallery);
+    } else if (!enabled) {
+      galleries = galleries.filter(g => g !== gallery);
+    }
+
+    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('teamEnabledGalleries', ?, datetime('now'))").run(JSON.stringify(galleries));
+
+    console.log(`[GallerySettings] Team processing ${enabled ? 'enabled' : 'disabled'} for "${gallery}"`);
+    res.json({ success: true, teamEnabledGalleries: galleries });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── SINGLE ORDER ───────────────────────────────────────────
 router.get('/:orderNum', async (req, res) => {
   try {

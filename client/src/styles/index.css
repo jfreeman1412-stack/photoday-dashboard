@@ -330,6 +330,17 @@ body {
   color: white;
 }
 
+.btn-warning {
+  background: rgba(232, 140, 48, 0.15);
+  color: #e88c30;
+  border-color: transparent;
+}
+
+.btn-warning:hover {
+  background: #e88c30;
+  color: white;
+}
+
 .btn-success {
   background: var(--success-subtle);
   color: var(--success);

@@ -25,6 +25,11 @@ export default function OrdersPage() {
   // Gallery filter
   const [galleryFilter, setGalleryFilter] = useState('all');
 
+  // Team filter
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [availableTeams, setAvailableTeams] = useState([]);
+  const [teamEnabledGalleries, setTeamEnabledGalleries] = useState([]);
+
   // Folder sort
   const [folderSort, setFolderSort] = useState([]);
   const [sortOptions, setSortOptions] = useState([]);
@@ -59,14 +64,40 @@ export default function OrdersPage() {
     return Array.from(set).sort();
   }, [currentOrders]);
 
-  // Filter orders by selected gallery
-  const filteredOrders = useMemo(() => {
-    if (galleryFilter === 'all') return currentOrders;
-    return currentOrders.filter(o => o.gallery === galleryFilter);
+  // Extract unique teams from filtered gallery's orders
+  const teams = useMemo(() => {
+    const orders = galleryFilter === 'all' ? currentOrders : currentOrders.filter(o => o.gallery === galleryFilter);
+    const set = new Set();
+    orders.forEach(o => {
+      (o.items || []).forEach(item => {
+        (item.tags || []).forEach(tag => set.add(tag));
+      });
+    });
+    return Array.from(set).sort();
   }, [currentOrders, galleryFilter]);
 
-  // Reset gallery filter when switching tabs
-  useEffect(() => { setGalleryFilter('all'); }, [activeTab]);
+  // Filter orders by selected gallery AND team
+  const filteredOrders = useMemo(() => {
+    let orders = currentOrders;
+    if (galleryFilter !== 'all') {
+      orders = orders.filter(o => o.gallery === galleryFilter);
+    }
+    if (teamFilter !== 'all' && teamFilter !== 'no_team') {
+      orders = orders.filter(o =>
+        (o.items || []).some(item => (item.tags || []).includes(teamFilter))
+      );
+    } else if (teamFilter === 'no_team') {
+      orders = orders.filter(o =>
+        (o.items || []).every(item => !item.tags || item.tags.length === 0)
+      );
+    }
+    return orders;
+  }, [currentOrders, galleryFilter, teamFilter]);
+
+  // Reset filters when switching tabs
+  useEffect(() => { setGalleryFilter('all'); setTeamFilter('all'); }, [activeTab]);
+  // Reset team filter when gallery changes
+  useEffect(() => { setTeamFilter('all'); }, [galleryFilter]);
 
   // ─── Load Data ──────────────────────────────────────────
   const loadOrders = useCallback(async (status) => {
@@ -110,6 +141,8 @@ export default function OrdersPage() {
     // Load folder sort settings
     api.getFolderSortOptions().then(setSortOptions).catch(() => {});
     api.getFolderSort().then(d => setFolderSort(d.sortLevels || [])).catch(() => {});
+    // Load gallery team settings
+    api.getGallerySettings().then(d => setTeamEnabledGalleries(d.teamEnabledGalleries || [])).catch(() => {});
     const interval = setInterval(loadCounts, 30000);
     return () => clearInterval(interval);
   }, [loadCounts, loadOrders]);
@@ -325,8 +358,16 @@ export default function OrdersPage() {
                 <td>
                   <div style={{ fontSize: 12 }}>
                     {(order.items || []).map((item, i) => (
-                      <div key={i} style={{ color: 'var(--text-secondary)' }}>
-                        {item.quantity}x {item.description}
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', marginBottom: 2 }}>
+                        <span>{item.quantity}x {item.description}</span>
+                        {(item.tags || []).map((tag, ti) => (
+                          <span key={ti} style={{
+                            padding: '0px 5px', borderRadius: 'var(--radius-sm)', fontSize: 9,
+                            background: 'rgba(232,140,48,0.15)', color: '#e88c30', fontWeight: 600,
+                          }}>
+                            {tag}
+                          </span>
+                        ))}
                       </div>
                     ))}
                   </div>
@@ -542,6 +583,7 @@ export default function OrdersPage() {
           display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px',
           background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)',
           marginBottom: 0, borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
+          flexWrap: 'wrap',
         }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Gallery:</span>
           <button
@@ -553,17 +595,77 @@ export default function OrdersPage() {
           </button>
           {galleries.map(g => {
             const count = currentOrders.filter(o => o.gallery === g).length;
+            const isTeamEnabled = teamEnabledGalleries.includes(g);
+            return (
+              <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <button
+                  className={`btn btn-sm ${galleryFilter === g ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setGalleryFilter(g)}
+                  style={{ padding: '3px 10px', fontSize: 11, borderRadius: isTeamEnabled ? 'var(--radius-sm) 0 0 var(--radius-sm)' : undefined }}
+                >
+                  {g} ({count})
+                </button>
+                <button
+                  className={`btn btn-sm ${isTeamEnabled ? 'btn-warning' : 'btn-secondary'}`}
+                  onClick={async () => {
+                    try {
+                      const result = await api.updateGallerySettings(g, !isTeamEnabled);
+                      setTeamEnabledGalleries(result.teamEnabledGalleries || []);
+                    } catch (err) { setError(err.message); }
+                  }}
+                  title={isTeamEnabled ? 'Team processing ON — click to disable' : 'Enable team processing for this gallery'}
+                  style={{
+                    padding: '3px 6px', fontSize: 10, minWidth: 0,
+                    borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
+                    opacity: isTeamEnabled ? 1 : 0.5,
+                  }}
+                >
+                  {isTeamEnabled ? '👥' : '👤'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─── Team Filter (appears when gallery is selected AND team-enabled) ── */}
+      {teams.length > 0 && galleryFilter !== 'all' && teamEnabledGalleries.includes(galleryFilter) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px',
+          background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)',
+          marginBottom: 0, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#e88c30' }}>Team:</span>
+          <button
+            className={`btn btn-sm ${teamFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setTeamFilter('all')}
+            style={{ padding: '3px 10px', fontSize: 11 }}
+          >
+            All Teams
+          </button>
+          {teams.map(t => {
+            const galleryOrders = currentOrders.filter(o => o.gallery === galleryFilter);
+            const count = galleryOrders.filter(o =>
+              (o.items || []).some(item => (item.tags || []).includes(t))
+            ).length;
             return (
               <button
-                key={g}
-                className={`btn btn-sm ${galleryFilter === g ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setGalleryFilter(g)}
+                key={t}
+                className={`btn btn-sm ${teamFilter === t ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setTeamFilter(t)}
                 style={{ padding: '3px 10px', fontSize: 11 }}
               >
-                {g} ({count})
+                {t} ({count})
               </button>
             );
           })}
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => setTeamFilter('no_team')}
+            style={{ padding: '3px 10px', fontSize: 11, opacity: teamFilter === 'no_team' ? 1 : 0.6 }}
+          >
+            No Team
+          </button>
         </div>
       )}
 

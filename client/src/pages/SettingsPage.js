@@ -109,10 +109,11 @@ export default function SettingsPage({ user }) {
   const loadPaths = useCallback(async () => {
     try {
       const data = await api.getPathSettings();
+      // Use raw overrides only — keeps variables like {date} intact in the input fields
       setPathSettings({
-        downloadBase: data.overrides?.downloadBase || data.downloadBase || '',
-        darkroomTemplateBase: data.overrides?.darkroomTemplateBase || data.darkroomTemplateBase || '',
-        txtOutput: data.overrides?.txtOutput || data.txtOutput || '',
+        downloadBase: data.overrides?.downloadBase || '',
+        darkroomTemplateBase: data.overrides?.darkroomTemplateBase || '',
+        txtOutput: data.overrides?.txtOutput || '',
       });
     } catch (err) { /* silent */ }
   }, []);
@@ -282,12 +283,9 @@ export default function SettingsPage({ user }) {
     clearMessages();
     try {
       const result = await api.updatePathSettings(pathSettings);
-      setPathSettings({
-        downloadBase: result.downloadBase || '',
-        darkroomTemplateBase: result.darkroomTemplateBase || '',
-        txtOutput: result.txtOutput || '',
-      });
-      setSuccess('Path settings saved. Restart the server for changes to take full effect.');
+      // Keep using the raw values we just saved (with variables intact)
+      // Don't replace with the resolved values from the response
+      setSuccess('Path settings saved');
     } catch (err) { setError(err.message); }
   };
 
