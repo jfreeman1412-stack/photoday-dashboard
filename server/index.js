@@ -17,26 +17,28 @@ if (config.env === 'development') {
 }
 
 // ─── API ROUTES ─────────────────────────────────────────────
-app.use('/api/photoday', require('./routes/photoday'));
-app.use('/api/orders', require('./routes/orders'));
-app.use('/api/shipstation', require('./routes/shipstation'));
-app.use('/api/settings', require('./routes/settings'));
-app.use('/api/print-sheets', require('./routes/printSheets'));
+// Auth routes (no authentication required)
+app.use('/api/auth', require('./routes/auth'));
+
+// Protected routes (use optionalAuth for now — will switch to requireAuth after users are set up)
+const { optionalAuth } = require('./middleware/auth');
+app.use('/api/photoday', optionalAuth, require('./routes/photoday'));
+app.use('/api/orders', optionalAuth, require('./routes/orders'));
+app.use('/api/shipstation', optionalAuth, require('./routes/shipstation'));
+app.use('/api/settings', optionalAuth, require('./routes/settings'));
+app.use('/api/print-sheets', optionalAuth, require('./routes/printSheets'));
 
 // ─── HEALTH CHECK ───────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.0.0',
+    version: '3.0.0',
     environment: config.env,
     timestamp: new Date().toISOString(),
+    database: 'sqlite',
     services: {
       photoday: !!(config.photoday.secret && config.photoday.labId),
       shipstation: !!config.shipstation.apiKey,
-    },
-    photoday: {
-      baseUrl: config.photoday.baseUrl,
-      labId: config.photoday.labId ? `${config.photoday.labId.substring(0, 8)}...` : 'not set',
     },
   });
 });
@@ -55,13 +57,14 @@ app.listen(config.port, async () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║   🏀 Sportsline Photography Production Dashboard v2     ║
-║      Powered by PhotoDay PDX API                         ║
+║   🏀 Sportsline Photography Production Dashboard v3     ║
+║      Powered by PhotoDay PDX API + SQLite               ║
 ║                                                          ║
 ║   Server running on port ${config.port}                         ║
 ║   Environment: ${config.env.padEnd(39)}║
 ║                                                          ║
 ║   API Endpoints:                                         ║
+║   • /api/auth        - Authentication & user management  ║
 ║   • /api/photoday    - PDX order retrieval & updates     ║
 ║   • /api/orders      - Order management & processing     ║
 ║   • /api/shipstation - ShipStation integration           ║
@@ -71,6 +74,15 @@ app.listen(config.port, async () => {
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
   `);
+
+  // Initialize database (SQLite) — must be first
+  try {
+    const databaseService = require('./services/database');
+    await databaseService.init();
+  } catch (err) {
+    console.error('[Database] Init FATAL:', err.message);
+    process.exit(1);
+  }
 
   // Initialize app settings (apply saved env overrides)
   try {
@@ -88,6 +100,14 @@ app.listen(config.port, async () => {
   } catch (err) {
     console.error('[Scheduler] Init error:', err.message);
   }
+
+  // Cleanup expired sessions every hour
+  setInterval(() => {
+    try {
+      const authService = require('./services/authService');
+      authService.cleanupSessions();
+    } catch (err) { /* silent */ }
+  }, 60 * 60 * 1000);
 });
 
 module.exports = app;

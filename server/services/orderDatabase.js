@@ -1,107 +1,176 @@
-const fs = require('fs-extra');
-const path = require('path');
-const config = require('../config');
+const databaseService = require('./database');
 
-const DB_PATH = path.join(__dirname, '..', 'config', 'orders-db.json');
-
+/**
+ * Order database — SQLite-backed replacement for orders-db.json.
+ * Maintains the same API surface so all existing code works unchanged.
+ */
 class OrderDatabase {
-  constructor() {
-    this._ensureDb();
-  }
 
-  _ensureDb() {
-    if (!fs.existsSync(DB_PATH)) {
-      fs.writeJsonSync(DB_PATH, {
-        orders: {},
-        lastFetch: null,
-        autoFetchEnabled: false,
-        autoFetchIntervalMinutes: 30,
-      }, { spaces: 2 });
-    }
-  }
-
-  async _read() {
-    return fs.readJson(DB_PATH);
-  }
-
-  async _write(data) {
-    await fs.writeJson(DB_PATH, data, { spaces: 2 });
+  get db() {
+    return databaseService.getDb();
   }
 
   // ─── ORDER CRUD ───────────────────────────────────────────
 
   /**
-   * Save or update an order in the local database.
-   * Status: 'unprocessed' | 'processed' | 'shipped'
+   * Save or update an order in the database.
    */
   async saveOrder(order, status = 'unprocessed') {
-    const db = await this._read();
     const orderNum = order.num;
+    const existing = this.db.prepare('SELECT order_num, status FROM orders WHERE order_num = ?').get(orderNum);
 
-    // Don't overwrite if it already exists at a later status
-    if (db.orders[orderNum]) {
-      const existingStatus = db.orders[orderNum].status;
-      const statusOrder = { unprocessed: 0, processed: 1, shipped: 2 };
-      if (statusOrder[existingStatus] >= statusOrder[status]) {
-        // Update order data but keep the higher status
-        db.orders[orderNum] = {
-          ...db.orders[orderNum],
-          orderData: order,
-          updatedAt: new Date().toISOString(),
-        };
-        await this._write(db);
-        return db.orders[orderNum];
-      }
+    if (existing) {
+      // Don't downgrade status
+      const statusOrder = { unprocessed: 0, partially_processed: 1, processed: 2, shipped: 3 };
+      const keepStatus = (statusOrder[existing.status] || 0) >= (statusOrder[status] || 0) ? existing.status : status;
+
+      // Update order data but keep higher status
+      this.db.prepare(`
+        UPDATE orders SET
+          order_uuid = ?, status = ?, gallery = ?, studio_name = ?, is_bulk = ?,
+          placed_at = ?, order_data = ?, updated_at = datetime('now')
+        WHERE order_num = ?
+      `).run(
+        order.id || null,
+        keepStatus,
+        order.gallery || '',
+        order.studio?.name || '',
+        (order.groups || []).length > 1 ? 1 : 0,
+        order.placedAt || null,
+        JSON.stringify(order),
+        orderNum
+      );
+
+      // Update items and images
+      this._upsertItems(orderNum, order);
+
+      return this.getOrder(orderNum);
     }
 
-    db.orders[orderNum] = {
+    // Insert new order
+    this.db.prepare(`
+      INSERT INTO orders (
+        order_num, order_uuid, status, gallery, studio_name, is_bulk,
+        placed_at, fetched_at, order_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+    `).run(
       orderNum,
-      orderId: order.id,
+      order.id || null,
       status,
-      orderData: order,
-      gallery: order.gallery || '',
-      studioName: order.studio?.name || '',
-      placedAt: order.placedAt,
-      itemCount: order.items?.length || 0,
-      items: (order.items || []).map(item => ({
-        description: item.description,
-        externalId: item.externalId,
-        quantity: item.quantity,
-        imageCount: item.images?.length || 0,
-      })),
-      isBulk: (order.groups || []).length > 1,
-      shipping: order.shipping || null,
-      // Tracking
-      fetchedAt: new Date().toISOString(),
-      processedAt: status === 'processed' ? new Date().toISOString() : null,
-      shippedAt: status === 'shipped' ? new Date().toISOString() : null,
-      carrier: null,
-      trackingNumber: null,
-      shipstationOrderId: null,
-      txtFile: null,
-      downloadPath: null,
-      updatedAt: new Date().toISOString(),
-    };
+      order.gallery || '',
+      order.studio?.name || '',
+      (order.groups || []).length > 1 ? 1 : 0,
+      order.placedAt || null,
+      JSON.stringify(order)
+    );
 
-    await this._write(db);
-    return db.orders[orderNum];
+    // Insert items and images
+    this._upsertItems(orderNum, order);
+
+    return this.getOrder(orderNum);
   }
 
   /**
-   * Update order status and metadata.
+   * Upsert order items and their images.
+   */
+  _upsertItems(orderNum, order) {
+    // Delete existing items and images for this order (they'll be re-inserted)
+    this.db.prepare('DELETE FROM order_item_images WHERE order_num = ?').run(orderNum);
+    this.db.prepare('DELETE FROM order_items WHERE order_num = ?').run(orderNum);
+
+    const insertItem = this.db.prepare(`
+      INSERT INTO order_items (order_num, item_uuid, description, external_id, quantity, image_count, tags)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertImage = this.db.prepare(`
+      INSERT INTO order_item_images (order_num, item_id, filename, asset_url, external_id, orientation)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const item of order.items || []) {
+      const tags = item.photoTags || [];
+      const result = insertItem.run(
+        orderNum,
+        item.id || null,
+        item.description || '',
+        item.externalId || '',
+        item.quantity || 1,
+        item.images?.length || 0,
+        JSON.stringify(tags)
+      );
+
+      const itemId = result.lastInsertRowid;
+      for (const image of item.images || []) {
+        insertImage.run(
+          orderNum,
+          itemId,
+          image.filename || '',
+          image.assetUrl || '',
+          image.externalId || '',
+          image.orientation || ''
+        );
+      }
+    }
+  }
+
+  /**
+   * Update order fields.
    */
   async updateOrder(orderNum, updates) {
-    const db = await this._read();
-    if (!db.orders[orderNum]) {
-      throw new Error(`Order ${orderNum} not found in database`);
-    }
-    db.orders[orderNum] = {
-      ...db.orders[orderNum],
-      ...updates,
-      updatedAt: new Date().toISOString(),
+    const existing = this.db.prepare('SELECT * FROM orders WHERE order_num = ?').get(orderNum);
+    if (!existing) throw new Error(`Order ${orderNum} not found in database`);
+
+    // Build dynamic UPDATE
+    const fields = [];
+    const values = [];
+
+    const directFields = {
+      status: 'status', gallery: 'gallery', studioName: 'studio_name',
+      carrier: 'carrier', trackingNumber: 'tracking_number',
+      shipstationOrderId: 'shipstation_order_id', downloadPath: 'download_path',
+      txtFile: 'txt_file', packingSlip: 'packing_slip',
+      processedAt: 'processed_at', shippedAt: 'shipped_at',
     };
-    await this._write(db);
-    return db.orders[orderNum];
+
+    for (const [jsKey, dbKey] of Object.entries(directFields)) {
+      if (updates[jsKey] !== undefined) {
+        fields.push(`${dbKey} = ?`);
+        values.push(updates[jsKey]);
+      }
+    }
+
+    // Handle boolean fields
+    if (updates.photodaySynced !== undefined) {
+      fields.push('photoday_synced = ?');
+      values.push(updates.photodaySynced ? 1 : 0);
+    }
+
+    // Handle orderData (full JSON)
+    if (updates.orderData) {
+      fields.push('order_data = ?');
+      values.push(JSON.stringify(updates.orderData));
+
+      // Also update items
+      this._upsertItems(orderNum, updates.orderData);
+    }
+
+    // Handle items array update (without full orderData)
+    if (updates.items && !updates.orderData) {
+      // Update the stored order_data JSON with new items
+      const currentData = JSON.parse(existing.order_data || '{}');
+      currentData.items = updates.items;
+      fields.push('order_data = ?');
+      values.push(JSON.stringify(currentData));
+    }
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      values.push(orderNum);
+      this.db.prepare(`UPDATE orders SET ${fields.join(', ')} WHERE order_num = ?`).run(...values);
+    }
+
+    return this.getOrder(orderNum);
   }
 
   /**
@@ -131,107 +200,183 @@ class OrderDatabase {
   // ─── QUERIES ──────────────────────────────────────────────
 
   /**
+   * Convert a raw database row to the order object format the frontend expects.
+   */
+  _rowToOrder(row) {
+    if (!row) return null;
+
+    const orderData = JSON.parse(row.order_data || '{}');
+
+    // Get items from the items table
+    const items = this.db.prepare('SELECT * FROM order_items WHERE order_num = ?').all(row.order_num);
+
+    return {
+      orderNum: row.order_num,
+      orderId: row.order_uuid,
+      status: row.status,
+      gallery: row.gallery,
+      studioName: row.studio_name,
+      isBulk: !!row.is_bulk,
+      placedAt: row.placed_at,
+      fetchedAt: row.fetched_at,
+      processedAt: row.processed_at,
+      shippedAt: row.shipped_at,
+      carrier: row.carrier,
+      trackingNumber: row.tracking_number,
+      shipstationOrderId: row.shipstation_order_id,
+      photodaySynced: !!row.photoday_synced,
+      downloadPath: row.download_path,
+      txtFile: row.txt_file,
+      packingSlip: row.packing_slip,
+      itemCount: items.length,
+      items: items.map(item => ({
+        id: item.item_uuid,
+        description: item.description,
+        externalId: item.external_id,
+        quantity: item.quantity,
+        imageCount: item.image_count,
+        tags: JSON.parse(item.tags || '[]'),
+        processed: !!item.processed,
+        processedAt: item.processed_at,
+      })),
+      // Include full order data for processing
+      orderData,
+      shipping: orderData.shipping || null,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
    * Get all orders, optionally filtered by status.
    */
   async getOrders(status = null) {
-    const db = await this._read();
-    let orders = Object.values(db.orders);
-
+    let rows;
     if (status) {
-      orders = orders.filter(o => o.status === status);
+      rows = this.db.prepare('SELECT * FROM orders WHERE status = ? ORDER BY placed_at DESC').all(status);
+    } else {
+      rows = this.db.prepare('SELECT * FROM orders ORDER BY placed_at DESC').all();
     }
-
-    // Sort by placedAt descending (newest first)
-    orders.sort((a, b) => new Date(b.placedAt || 0) - new Date(a.placedAt || 0));
-    return orders;
+    return rows.map(r => this._rowToOrder(r));
   }
 
-  async getUnprocessedOrders() {
-    return this.getOrders('unprocessed');
-  }
-
-  async getProcessedOrders() {
-    return this.getOrders('processed');
-  }
-
-  async getShippedOrders() {
-    return this.getOrders('shipped');
-  }
+  async getUnprocessedOrders() { return this.getOrders('unprocessed'); }
+  async getProcessedOrders() { return this.getOrders('processed'); }
+  async getShippedOrders() { return this.getOrders('shipped'); }
 
   async getOrder(orderNum) {
-    const db = await this._read();
-    return db.orders[orderNum] || null;
+    const row = this.db.prepare('SELECT * FROM orders WHERE order_num = ?').get(orderNum);
+    return this._rowToOrder(row);
   }
 
   /**
    * Get order counts by status.
    */
   async getCounts() {
-    const db = await this._read();
-    const orders = Object.values(db.orders);
-    return {
-      total: orders.length,
-      unprocessed: orders.filter(o => o.status === 'unprocessed').length,
-      processed: orders.filter(o => o.status === 'processed').length,
-      shipped: orders.filter(o => o.status === 'shipped').length,
-    };
+    const rows = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM orders GROUP BY status
+    `).all();
+
+    const counts = { total: 0, unprocessed: 0, partially_processed: 0, processed: 0, shipped: 0 };
+    for (const row of rows) {
+      counts[row.status] = row.count;
+      counts.total += row.count;
+    }
+    return counts;
   }
 
   /**
-   * Check if an order exists in the database.
+   * Check if an order exists.
    */
   async hasOrder(orderNum) {
-    const db = await this._read();
-    return !!db.orders[orderNum];
+    const row = this.db.prepare('SELECT 1 FROM orders WHERE order_num = ?').get(orderNum);
+    return !!row;
+  }
+
+  // ─── TEAM QUERIES ─────────────────────────────────────────
+
+  /**
+   * Get all unique teams (tags) across all orders, optionally filtered by gallery.
+   */
+  async getTeams(gallery = null) {
+    let rows;
+    if (gallery) {
+      rows = this.db.prepare(`
+        SELECT DISTINCT oi.tags FROM order_items oi
+        JOIN orders o ON o.order_num = oi.order_num
+        WHERE o.gallery = ? AND oi.tags != '[]'
+      `).all(gallery);
+    } else {
+      rows = this.db.prepare("SELECT DISTINCT tags FROM order_items WHERE tags != '[]'").all();
+    }
+
+    const teams = new Set();
+    for (const row of rows) {
+      const tags = JSON.parse(row.tags || '[]');
+      tags.forEach(t => teams.add(t));
+    }
+    return [...teams].sort();
+  }
+
+  /**
+   * Get orders filtered by team tag.
+   */
+  async getOrdersByTeam(team, status = null) {
+    let query = `
+      SELECT DISTINCT o.* FROM orders o
+      JOIN order_items oi ON o.order_num = oi.order_num
+      WHERE oi.tags LIKE ?
+    `;
+    const params = [`%"${team}"%`];
+
+    if (status) {
+      query += ' AND o.status = ?';
+      params.push(status);
+    }
+
+    query += ' ORDER BY o.placed_at DESC';
+
+    const rows = this.db.prepare(query).all(...params);
+    return rows.map(r => this._rowToOrder(r));
   }
 
   // ─── AUTO-FETCH SETTINGS ─────────────────────────────────
 
   async getAutoFetchSettings() {
-    const db = await this._read();
+    const getVal = (key, defaultVal) => {
+      const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+      return row ? JSON.parse(row.value) : defaultVal;
+    };
+
     return {
-      enabled: db.autoFetchEnabled || false,
-      intervalMinutes: db.autoFetchIntervalMinutes || 30,
-      lastFetch: db.lastFetch,
+      enabled: getVal('autoFetchEnabled', false),
+      intervalMinutes: getVal('autoFetchIntervalMinutes', 30),
+      lastFetch: getVal('lastFetch', null),
     };
   }
 
   async updateAutoFetchSettings(settings) {
-    const db = await this._read();
-    if (settings.enabled !== undefined) db.autoFetchEnabled = settings.enabled;
-    if (settings.intervalMinutes !== undefined) db.autoFetchIntervalMinutes = settings.intervalMinutes;
-    await this._write(db);
+    const upsert = this.db.prepare('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime(\'now\'))');
+
+    if (settings.enabled !== undefined) upsert.run('autoFetchEnabled', JSON.stringify(settings.enabled));
+    if (settings.intervalMinutes !== undefined) upsert.run('autoFetchIntervalMinutes', JSON.stringify(settings.intervalMinutes));
+
     return this.getAutoFetchSettings();
   }
 
   async updateLastFetch() {
-    const db = await this._read();
-    db.lastFetch = new Date().toISOString();
-    await this._write(db);
+    this.db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('lastFetch', ?, datetime('now'))").run(
+      JSON.stringify(new Date().toISOString())
+    );
   }
 
   // ─── CLEANUP ──────────────────────────────────────────────
 
-  /**
-   * Remove an order from the database.
-   */
   async removeOrder(orderNum) {
-    const db = await this._read();
-    delete db.orders[orderNum];
-    await this._write(db);
+    this.db.prepare('DELETE FROM orders WHERE order_num = ?').run(orderNum);
   }
 
-  /**
-   * Clear all orders with a given status.
-   */
   async clearByStatus(status) {
-    const db = await this._read();
-    for (const key of Object.keys(db.orders)) {
-      if (db.orders[key].status === status) {
-        delete db.orders[key];
-      }
-    }
-    await this._write(db);
+    this.db.prepare('DELETE FROM orders WHERE status = ?').run(status);
   }
 }
 
