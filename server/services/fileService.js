@@ -35,6 +35,22 @@ class FileService {
       studioName: order.studio?.name,
     });
 
+    // Check for per-gallery folder sort override
+    if (!options.sortLevels && order.gallery) {
+      try {
+        const databaseService = require('./database');
+        const db = databaseService.getDb();
+        const row = db.prepare("SELECT value FROM settings WHERE key = 'gallerySettings'").get();
+        const gallerySettings = row ? JSON.parse(row.value) : {};
+        const gc = gallerySettings[order.gallery];
+        if (gc && gc.folderSort && gc.folderSort.length > 0) {
+          console.log(`[FileService] Using per-gallery sort for "${order.gallery}": ${gc.folderSort.join(' → ')}`);
+          const segments = folderSortService._buildPathFromLevels(order, gc.folderSort);
+          return path.join(baseDir, ...segments);
+        }
+      } catch (err) { /* fall through to global sort */ }
+    }
+
     if (options.sortLevels) {
       const segments = folderSortService._buildPathFromLevels(order, options.sortLevels);
       return path.join(baseDir, ...segments);

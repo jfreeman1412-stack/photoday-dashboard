@@ -26,13 +26,22 @@
       "gap": 0.0005,
       "textOverlays": [
         {
-          "text": "{order_id} - {gallery} - {item_description}",
-          "x": 0.2,
-          "y": 7.5,
+          "text": "{first_name} {last_name} {order_id} - {gallery} - {item_description}",
+          "x": 0,
+          "y": 3.8,
           "fontSize": 10,
-          "color": "#000000"
+          "color": "#000000",
+          "autoSize": true,
+          "centerAlign": true,
+          "width": 5,
+          "height": 1
         }
-      ]
+      ],
+      "colGap": 0.0005,
+      "rowGap": 1,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0
     },
     {
       "id": "6d7a67e0-194e-4549-9e60-22fcac3e0a95",
@@ -93,14 +102,21 @@
       "rowGap": 0,
       "textOverlays": [
         {
-          "text": "{first_name} {last_name} Order:{order_id} ",
-          "x": 24.3,
-          "y": 7.9,
-          "fontSize": 8,
+          "text": "{first_name} {last_name} Team: {team} Order: {order_id}",
+          "x": 24.2,
+          "y": 7.5,
+          "fontSize": 10,
           "color": "#000000",
-          "rotation": -90
+          "autoSize": true,
+          "centerAlign": true,
+          "rotation": -90,
+          "width": 1.5,
+          "height": 8
         }
-      ]
+      ],
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0
     },
     {
       "id": "5972b494-b0f0-4ef7-817d-606bdecc6888",
@@ -212,9 +228,16 @@
           "y": 3.9,
           "fontSize": 7,
           "color": "#000000",
-          "rotation": -90
+          "rotation": -90,
+          "autoSize": true,
+          "centerAlign": true,
+          "width": 1.5,
+          "height": 4
         }
-      ]
+      ],
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0
     },
     {
       "id": "120f7ea3-f22a-48b7-aee3-1fa9eb7972f0",
@@ -287,6 +310,66 @@
           "rotation": -90
         }
       ]
+    },
+    {
+      "id": "ba989e0f-c7cb-48bc-97ee-8374c38649e0",
+      "name": "5x7 Team Photo",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 7,
+      "itemHeight": 5,
+      "sheetWidth": 8,
+      "sheetHeight": 5,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Team: {team} Order: {order_id}",
+          "x": 7.2,
+          "y": 5,
+          "fontSize": 10,
+          "color": "#000000",
+          "autoSize": true,
+          "centerAlign": true,
+          "rotation": -90,
+          "width": 1.5,
+          "height": 7
+        }
+      ]
+    },
+    {
+      "id": "d401e7e4-f12b-40f2-9b6c-a376927581d3",
+      "name": "5x7 IND",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 5,
+      "itemHeight": 7,
+      "sheetWidth": 5,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order: {order_id} {team}",
+          "x": 0,
+          "y": 7.2,
+          "fontSize": 10,
+          "color": "#000000",
+          "rotation": 0,
+          "autoSize": true,
+          "centerAlign": true,
+          "width": 5,
+          "height": 1
+        }
+      ]
     }
   ],
   "mappings": [
@@ -333,6 +416,18 @@
     {
       "externalId": "27",
       "layoutId": "b6b5351d-5848-4eb7-bc1f-66d468740aa1"
+    },
+    {
+      "externalId": "11",
+      "layoutId": "ba989e0f-c7cb-48bc-97ee-8374c38649e0"
+    },
+    {
+      "externalId": "10",
+      "layoutId": "d401e7e4-f12b-40f2-9b6c-a376927581d3"
+    },
+    {
+      "externalId": "16",
+      "layoutId": "5692caa8-e3d3-48e8-a03f-50e6fd0cb829"
     }
   ]
 }

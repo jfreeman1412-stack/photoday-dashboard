@@ -115,6 +115,11 @@ class ShipStationService {
     return data;
   }
 
+  async listShipments(params = {}) {
+    const { data } = await this.client.get('/shipments', { params });
+    return data;
+  }
+
   async deleteOrder(orderId) {
     const { data } = await this.client.delete(`/orders/${orderId}`);
     return data;

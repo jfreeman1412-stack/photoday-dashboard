@@ -581,8 +581,19 @@ export default function SettingsPage({ user }) {
                             <input className="form-input" type="number" step="0.1" value={overlay.y} onChange={(e) => updateTextOverlay(i, 'y', parseFloat(e.target.value) || 0)} style={{ fontSize: 11 }} />
                           </div>
                           <div className="form-group" style={{ marginBottom: 0, flex: '1' }}>
+                            <label className="form-label" style={{ fontSize: 10 }}>W (")</label>
+                            <input className="form-input" type="number" step="0.1" value={overlay.width || ''} onChange={(e) => updateTextOverlay(i, 'width', parseFloat(e.target.value) || 0)}
+                              placeholder="auto" style={{ fontSize: 11 }} />
+                          </div>
+                          <div className="form-group" style={{ marginBottom: 0, flex: '1' }}>
+                            <label className="form-label" style={{ fontSize: 10 }}>H (")</label>
+                            <input className="form-input" type="number" step="0.1" value={overlay.height || ''} onChange={(e) => updateTextOverlay(i, 'height', parseFloat(e.target.value) || 0)}
+                              placeholder="auto" style={{ fontSize: 11 }} />
+                          </div>
+                          <div className="form-group" style={{ marginBottom: 0, flex: '1' }}>
                             <label className="form-label" style={{ fontSize: 10 }}>Size (pt)</label>
-                            <input className="form-input" type="number" min="4" max="72" value={overlay.fontSize} onChange={(e) => updateTextOverlay(i, 'fontSize', parseInt(e.target.value) || 10)} style={{ fontSize: 11 }} />
+                            <input className="form-input" type="number" min="4" max="200" value={overlay.fontSize} onChange={(e) => updateTextOverlay(i, 'fontSize', parseInt(e.target.value) || 10)}
+                              disabled={overlay.autoSize} style={{ fontSize: 11, opacity: overlay.autoSize ? 0.5 : 1 }} />
                           </div>
                           <div className="form-group" style={{ marginBottom: 0, flex: '1' }}>
                             <label className="form-label" style={{ fontSize: 10 }}>Rotate (°)</label>
@@ -593,6 +604,21 @@ export default function SettingsPage({ user }) {
                             <input type="color" value={overlay.color || '#000000'} onChange={(e) => updateTextOverlay(i, 'color', e.target.value)}
                               style={{ width: '100%', height: 28, border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-sm)' }} />
                           </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 16, marginTop: 6, alignItems: 'center' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={overlay.autoSize || false}
+                              onChange={(e) => updateTextOverlay(i, 'autoSize', e.target.checked)} />
+                            Auto-size to fit
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={overlay.centerAlign || false}
+                              onChange={(e) => updateTextOverlay(i, 'centerAlign', e.target.checked)} />
+                            Center align
+                          </label>
+                          {overlay.autoSize && !overlay.width && (
+                            <span style={{ fontSize: 9, color: 'var(--warning)' }}>Set W and H for auto-size to work</span>
+                          )}
                         </div>
                       </div>
                     ))}

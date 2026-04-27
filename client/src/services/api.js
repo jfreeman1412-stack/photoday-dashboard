@@ -98,9 +98,9 @@ class ApiService {
     return this._fetch(`/orders/meta/teams${qs}`);
   }
   getGallerySettings() { return this._fetch('/orders/meta/gallery-settings'); }
-  updateGallerySettings(gallery, enabled) {
+  updateGallerySettings(gallery, settings) {
     return this._fetch('/orders/meta/gallery-settings', {
-      method: 'PUT', body: JSON.stringify({ gallery, enabled }),
+      method: 'PUT', body: JSON.stringify({ gallery, settings }),
     });
   }
 

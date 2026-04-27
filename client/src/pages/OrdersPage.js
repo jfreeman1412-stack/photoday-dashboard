@@ -28,7 +28,13 @@ export default function OrdersPage() {
   // Team filter
   const [teamFilter, setTeamFilter] = useState('all');
   const [availableTeams, setAvailableTeams] = useState([]);
-  const [teamEnabledGalleries, setTeamEnabledGalleries] = useState([]);
+  const [gallerySettings, setGallerySettings] = useState({});
+  const [showGalleryConfig, setShowGalleryConfig] = useState(null); // gallery name being configured
+  const [configSortLevels, setConfigSortLevels] = useState([]);
+
+  // Helper to get a gallery's settings
+  const getGalleryConfig = (gallery) => gallerySettings[gallery] || { teamEnabled: false, autoProcess: false, folderSort: null };
+  const teamEnabledGalleries = Object.entries(gallerySettings).filter(([_, s]) => s.teamEnabled).map(([name]) => name);
 
   // Folder sort
   const [folderSort, setFolderSort] = useState([]);
@@ -141,8 +147,8 @@ export default function OrdersPage() {
     // Load folder sort settings
     api.getFolderSortOptions().then(setSortOptions).catch(() => {});
     api.getFolderSort().then(d => setFolderSort(d.sortLevels || [])).catch(() => {});
-    // Load gallery team settings
-    api.getGallerySettings().then(d => setTeamEnabledGalleries(d.teamEnabledGalleries || [])).catch(() => {});
+    // Load gallery settings
+    api.getGallerySettings().then(d => setGallerySettings(d.gallerySettings || {})).catch(() => {});
     const interval = setInterval(loadCounts, 30000);
     return () => clearInterval(interval);
   }, [loadCounts, loadOrders]);
@@ -588,43 +594,150 @@ export default function OrdersPage() {
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Gallery:</span>
           <button
             className={`btn btn-sm ${galleryFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setGalleryFilter('all')}
+            onClick={() => { setGalleryFilter('all'); setShowGalleryConfig(null); }}
             style={{ padding: '3px 10px', fontSize: 11 }}
           >
             All ({currentOrders.length})
           </button>
           {galleries.map(g => {
             const count = currentOrders.filter(o => o.gallery === g).length;
-            const isTeamEnabled = teamEnabledGalleries.includes(g);
+            const gc = getGalleryConfig(g);
+            const hasSettings = gc.teamEnabled || gc.autoProcess || (gc.folderSort && gc.folderSort.length > 0);
             return (
               <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 <button
                   className={`btn btn-sm ${galleryFilter === g ? 'btn-primary' : 'btn-secondary'}`}
                   onClick={() => setGalleryFilter(g)}
-                  style={{ padding: '3px 10px', fontSize: 11, borderRadius: isTeamEnabled ? 'var(--radius-sm) 0 0 var(--radius-sm)' : undefined }}
+                  style={{ padding: '3px 10px', fontSize: 11, borderRadius: 'var(--radius-sm) 0 0 var(--radius-sm)' }}
                 >
                   {g} ({count})
+                  {hasSettings && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>⚙</span>}
                 </button>
                 <button
-                  className={`btn btn-sm ${isTeamEnabled ? 'btn-warning' : 'btn-secondary'}`}
-                  onClick={async () => {
-                    try {
-                      const result = await api.updateGallerySettings(g, !isTeamEnabled);
-                      setTeamEnabledGalleries(result.teamEnabledGalleries || []);
-                    } catch (err) { setError(err.message); }
+                  className={`btn btn-sm ${showGalleryConfig === g ? 'btn-primary' : hasSettings ? 'btn-warning' : 'btn-secondary'}`}
+                  onClick={() => {
+                    if (showGalleryConfig === g) {
+                      setShowGalleryConfig(null);
+                    } else {
+                      setGalleryFilter(g);
+                      setShowGalleryConfig(g);
+                      setConfigSortLevels(gc.folderSort || []);
+                    }
                   }}
-                  title={isTeamEnabled ? 'Team processing ON — click to disable' : 'Enable team processing for this gallery'}
-                  style={{
-                    padding: '3px 6px', fontSize: 10, minWidth: 0,
-                    borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
-                    opacity: isTeamEnabled ? 1 : 0.5,
-                  }}
+                  title="Gallery settings"
+                  style={{ padding: '3px 6px', fontSize: 10, minWidth: 0, borderRadius: '0 var(--radius-sm) var(--radius-sm) 0' }}
                 >
-                  {isTeamEnabled ? '👥' : '👤'}
+                  ⚙
                 </button>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ─── Gallery Config Panel ──────────────────────────── */}
+      {showGalleryConfig && (
+        <div style={{
+          padding: '16px 20px', background: 'var(--bg-card)',
+          borderBottom: '2px solid var(--accent)', marginBottom: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>
+              Settings for "{showGalleryConfig}"
+            </div>
+            <button className="btn btn-sm btn-secondary" onClick={() => setShowGalleryConfig(null)} style={{ padding: '2px 8px', fontSize: 11 }}>Close</button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            {/* Toggles */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={getGalleryConfig(showGalleryConfig).autoProcess || false}
+                  onChange={async (e) => {
+                    try {
+                      const result = await api.updateGallerySettings(showGalleryConfig, { autoProcess: e.target.checked });
+                      setGallerySettings(result.gallerySettings || {});
+                    } catch (err) { setError(err.message); }
+                  }} />
+                <span style={{ fontWeight: 600 }}>Auto-process orders</span>
+              </label>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 24, marginTop: -6 }}>
+                New orders from this gallery will be processed automatically when fetched
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={getGalleryConfig(showGalleryConfig).teamEnabled || false}
+                  onChange={async (e) => {
+                    try {
+                      const result = await api.updateGallerySettings(showGalleryConfig, { teamEnabled: e.target.checked });
+                      setGallerySettings(result.gallerySettings || {});
+                    } catch (err) { setError(err.message); }
+                  }} />
+                <span style={{ fontWeight: 600 }}>Team processing</span>
+              </label>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 24, marginTop: -6 }}>
+                Enable team filter and per-team processing for this gallery
+              </div>
+
+              {getGalleryConfig(showGalleryConfig).autoProcess && getGalleryConfig(showGalleryConfig).teamEnabled && (
+                <div style={{ fontSize: 11, color: 'var(--warning)', marginLeft: 24, padding: '4px 8px', background: 'rgba(255,152,0,0.1)', borderRadius: 'var(--radius-sm)' }}>
+                  Note: With both enabled, auto-process only runs for orders without team tags. Team-tagged orders require manual team selection.
+                </div>
+              )}
+            </div>
+
+            {/* Folder sort */}
+            <div style={{ flex: '1 1 300px' }}>
+              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>Folder Sort (for this gallery)</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                {configSortLevels.length === 0 ? 'Using global default' : `Custom: ${configSortLevels.join(' → ')}`}
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+                {configSortLevels.map((level, i) => (
+                  <span key={i} style={{
+                    padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: 11, fontWeight: 600,
+                    background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', gap: 4,
+                  }}>
+                    {level}
+                    <button onClick={() => {
+                      const newLevels = configSortLevels.filter((_, j) => j !== i);
+                      setConfigSortLevels(newLevels);
+                    }} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 700 }}>×</button>
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+                {['gallery', 'team', 'order_id', 'shipping_type', 'shipping_name', 'date'].map(opt => (
+                  <button key={opt} className="btn btn-sm btn-secondary"
+                    onClick={() => {
+                      if (!configSortLevels.includes(opt)) setConfigSortLevels([...configSortLevels, opt]);
+                    }}
+                    disabled={configSortLevels.includes(opt)}
+                    style={{ padding: '2px 6px', fontSize: 10, opacity: configSortLevels.includes(opt) ? 0.4 : 1 }}>
+                    + {opt}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm btn-primary" onClick={async () => {
+                  try {
+                    const result = await api.updateGallerySettings(showGalleryConfig, {
+                      folderSort: configSortLevels.length > 0 ? configSortLevels : null,
+                    });
+                    setGallerySettings(result.gallerySettings || {});
+                    setSuccess(`Folder sort saved for "${showGalleryConfig}": ${configSortLevels.length > 0 ? configSortLevels.join(' → ') : 'using global default'}`);
+                  } catch (err) { setError(err.message); }
+                }}>
+                  Save Sort
+                </button>
+                <button className="btn btn-sm btn-secondary" onClick={() => {
+                  setConfigSortLevels([]);
+                }}>
+                  Use Global Default
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -660,7 +773,7 @@ export default function OrdersPage() {
             );
           })}
           <button
-            className="btn btn-sm btn-secondary"
+            className={`btn btn-sm ${teamFilter === 'no_team' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setTeamFilter('no_team')}
             style={{ padding: '3px 10px', fontSize: 11, opacity: teamFilter === 'no_team' ? 1 : 0.6 }}
           >

@@ -21,6 +21,9 @@ const TEXT_VARIABLES = [
   { token: '{item_description}', description: 'Product description (e.g., 8 Wallets)' },
   { token: '{item_sku}', description: 'Product External ID / SKU' },
   { token: '{quantity}', description: 'Item quantity' },
+  { token: '{photo_tag}', description: 'First photo tag / team name' },
+  { token: '{team}', description: 'Same as {photo_tag} — team name' },
+  { token: '{photo_tags}', description: 'All photo tags, comma separated' },
 ];
 
 class ImpositionService {
@@ -191,6 +194,9 @@ class ImpositionService {
     result = result.replace(/\{item_description\}/g, context.itemDescription || '');
     result = result.replace(/\{item_sku\}/g, context.itemSku || '');
     result = result.replace(/\{quantity\}/g, String(context.quantity || ''));
+    result = result.replace(/\{photo_tag\}/g, context.photoTag || '');
+    result = result.replace(/\{team\}/g, context.photoTag || '');
+    result = result.replace(/\{photo_tags\}/g, context.photoTags || '');
     return result;
   }
 
@@ -291,41 +297,96 @@ class ImpositionService {
           continue;
         }
 
-        const fontSize = Math.round((overlay.fontSize || 12) * (dpi / 72));
         const color = overlay.color || '#000000';
         const rotation = overlay.rotation || 0;
+        const autoSize = overlay.autoSize || false;
+        const centerAlign = overlay.centerAlign || false;
 
         const textX = Math.round((overlay.x || 0) * dpi);
         const textY = Math.round((overlay.y || 0) * dpi);
+        let boxW = overlay.width ? Math.round(overlay.width * dpi) : 0;
+        let boxH = overlay.height ? Math.round(overlay.height * dpi) : 0;
+
+        // For rotated text, swap W and H for auto-sizing
+        // When rotated ±90°, the "width" of the text area becomes the vertical span
+        // and the "height" becomes the horizontal run
+        const isRotated90 = Math.abs(rotation) === 90 || Math.abs(rotation) === 270;
+        let sizeW = boxW;
+        let sizeH = boxH;
+        if (isRotated90 && boxW > 0 && boxH > 0) {
+          sizeW = boxH; // text runs along the H dimension
+          sizeH = boxW; // text height is constrained by W dimension
+        }
 
         // Split text into lines (support \n for line breaks)
         const lines = resolvedText.split('\\n').map(l => l.trim());
+
+        // Calculate font size
+        let fontSize;
+        if (autoSize && sizeW > 0 && sizeH > 0) {
+          // Auto-size: find the largest font that fits within the bounding box
+          // Estimate character width as ~0.6x font size for Arial
+          const charWidthRatio = 0.6;
+          const longestLine = Math.max(...lines.map(l => l.length), 1);
+          const maxFontW = Math.floor(sizeW / (longestLine * charWidthRatio));
+          const lineHeightRatio = 1.3;
+          const maxFontH = Math.floor(sizeH / (lines.length * lineHeightRatio));
+          fontSize = Math.min(maxFontW, maxFontH);
+          fontSize = Math.max(fontSize, 8); // Minimum 8px
+          console.log(`[Imposition] Auto-size: box ${boxW}x${boxH}px (effective ${sizeW}x${sizeH}px), longestLine=${longestLine}ch, lines=${lines.length}, fontSize=${fontSize}px`);
+        } else {
+          fontSize = Math.round((overlay.fontSize || 12) * (dpi / 72));
+        }
+
         const lineHeight = Math.round(fontSize * 1.3);
+        const textAnchor = centerAlign ? 'middle' : 'start';
+
+        // For centering calculations, use effective dimensions (swapped for rotated)
+        const centerW = isRotated90 ? sizeW : boxW;
+        const centerH = isRotated90 ? sizeH : boxH;
 
         // Build tspan elements for each line
         const tspans = lines.map((line, i) => {
           const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          if (centerAlign && centerW > 0) {
+            return `<tspan x="${Math.round(centerW / 2)}" dy="${i === 0 ? 0 : lineHeight}">${escaped}</tspan>`;
+          }
           return `<tspan x="0" dy="${i === 0 ? 0 : lineHeight}">${escaped}</tspan>`;
         }).join('');
 
-        // SVG must fit within remaining sheet space from the text position
-        const availW = Math.max(sheetPxW - textX, 1);
-        const availH = Math.max(sheetPxH - textY, 1);
+        // Calculate vertical offset — center vertically in the effective height
+        let verticalOffset = fontSize;
+        if (centerH > 0 && centerAlign) {
+          const totalTextHeight = lines.length * lineHeight;
+          verticalOffset = Math.round((centerH - totalTextHeight) / 2) + fontSize;
+          verticalOffset = Math.max(verticalOffset, fontSize);
+        }
 
-        // Apply rotation via transform — rotate around the text baseline
-        const transformAttr = rotation ? ` transform="rotate(${rotation}, 0, ${fontSize})"` : '';
+        // For rotated text, create a full-sheet SVG so rotation never clips
+        if (rotation !== 0) {
+          const textXAttr = centerAlign && centerW > 0 ? Math.round(centerW / 2) : 0;
+          const svgText = Buffer.from(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="${sheetPxW}" height="${sheetPxH}">` +
+            `<g transform="translate(${textX}, ${textY}) rotate(${rotation})">` +
+            `<text x="${textXAttr}" y="${verticalOffset}" font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}" fill="${color}" text-anchor="${textAnchor}">${tspans}</text>` +
+            `</g></svg>`
+          );
+          composites.push({ input: svgText, left: 0, top: 0 });
+          console.log(`[Imposition] Rotated text SVG: full sheet, text at (${textX}, ${textY}), fontSize=${fontSize}px, rot=${rotation}°, center=${centerAlign}, autoSize=${autoSize}`);
+        } else {
+          // No rotation
+          const availW = boxW > 0 ? boxW : Math.max(sheetPxW - textX, 1);
+          const availH = boxH > 0 ? boxH : Math.max(sheetPxH - textY, 1);
+          const textXAttr = centerAlign && boxW > 0 ? Math.round(boxW / 2) : 0;
 
-        const svgText = Buffer.from(`
-          <svg xmlns="http://www.w3.org/2000/svg" width="${availW}" height="${availH}">
-            <text x="0" y="${fontSize}" font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}" fill="${color}"${transformAttr}>${tspans}</text>
-          </svg>
-        `);
-
-        composites.push({
-          input: svgText,
-          left: textX,
-          top: textY,
-        });
+          const svgText = Buffer.from(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="${availW}" height="${availH}">` +
+            `<text x="${textXAttr}" y="${verticalOffset}" font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}" fill="${color}" text-anchor="${textAnchor}">${tspans}</text>` +
+            `</svg>`
+          );
+          composites.push({ input: svgText, left: textX, top: textY });
+          console.log(`[Imposition] Text SVG: ${availW}x${availH}px at (${textX}, ${textY}), fontSize=${fontSize}px, center=${centerAlign}, autoSize=${autoSize}`);
+        }
       }
     }
 
@@ -372,6 +433,7 @@ class ImpositionService {
   _buildContext(order, item) {
     const dest = order.shipping?.destination || {};
     const recipientParts = (dest.recipient || '').split(' ');
+    const tags = item.photoTags || [];
     return {
       orderNum: order.num,
       orderId: order.id,
@@ -382,6 +444,8 @@ class ImpositionService {
       itemDescription: item.description || '',
       itemSku: item.externalId || '',
       quantity: item.quantity || 1,
+      photoTag: tags[0] || '',
+      photoTags: tags.join(', '),
     };
   }
 

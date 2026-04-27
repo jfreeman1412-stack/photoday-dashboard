@@ -74,11 +74,54 @@ class SchedulerService {
 
       let newCount = 0;
       let updatedCount = 0;
+      const autoProcessed = [];
+
       for (const order of orders) {
         const exists = await orderDatabase.hasOrder(order.num);
         if (!exists) {
           await orderDatabase.saveOrder(order, 'unprocessed');
           newCount++;
+
+          // Download images immediately while asset URLs are fresh
+          // This ensures images are on disk when the user clicks Process later
+          let shouldAutoProcess = false;
+          try {
+            console.log(`[Scheduler] Downloading images for new order ${order.num}...`);
+            const dlResult = await fileService.downloadOrderImages(order);
+            if (dlResult.successCount > 0) {
+              console.log(`[Scheduler] Downloaded ${dlResult.successCount} images for ${order.num} → ${dlResult.orderDir}`);
+              await orderDatabase.updateOrder(order.num, { downloadPath: dlResult.orderDir });
+            }
+          } catch (dlErr) {
+            console.error(`[Scheduler] Image download error for ${order.num}: ${dlErr.message}`);
+          }
+
+          // Check if this gallery has auto-process enabled
+          try {
+            const galleryConfig = await this._getGalleryConfig(order.gallery);
+            if (galleryConfig.autoProcess) {
+              // If team processing is also on, only auto-process orders without team tags
+              const hasTags = (order.items || []).some(item => item.photoTags && item.photoTags.length > 0);
+              if (!galleryConfig.teamEnabled || !hasTags) {
+                shouldAutoProcess = true;
+              } else {
+                console.log(`[Scheduler] Skipping auto-process for ${order.num} — has team tags, requires manual team selection`);
+              }
+            }
+          } catch (gcErr) {
+            // No gallery config — just skip auto-process
+          }
+
+          if (shouldAutoProcess) {
+            console.log(`[Scheduler] Auto-processing ${order.num} from "${order.gallery}"`);
+            try {
+              await this.processOrder(order.num, { autoProcess: true });
+              autoProcessed.push(order.num);
+              console.log(`[Scheduler] Auto-processed ${order.num} successfully`);
+            } catch (apErr) {
+              console.error(`[Scheduler] Auto-process failed for ${order.num}: ${apErr.message}`);
+            }
+          }
         } else {
           // Always update orderData to keep asset URLs fresh
           await orderDatabase.saveOrder(order, 'unprocessed');
@@ -88,12 +131,13 @@ class SchedulerService {
       }
 
       await orderDatabase.updateLastFetch();
-      console.log(`[Scheduler] Fetched ${orders.length} orders, ${newCount} new, ${updatedCount} updated`);
+      console.log(`[Scheduler] Fetched ${orders.length} orders, ${newCount} new, ${updatedCount} updated, ${autoProcessed.length} auto-processed`);
 
       return {
         fetched: orders.length,
         newOrders: newCount,
-        newCount, // alias for dashboard
+        newCount,
+        autoProcessed: autoProcessed.length,
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
@@ -254,14 +298,25 @@ class SchedulerService {
     let downloadResult;
     try {
       downloadResult = await fileService.downloadOrderImages(order, options);
-      if (downloadResult.errorCount > 0 && downloadResult.successCount === 0) {
-        console.warn(`[Scheduler] All image downloads failed for ${orderNum} — asset URLs may have expired`);
-        if (localOrder.downloadPath) {
-          console.log(`[Scheduler] Using previously downloaded images at: ${localOrder.downloadPath}`);
-          downloadResult.orderDir = localOrder.downloadPath;
+      
+      // If any images failed to download, abort processing
+      // Leave the order as unprocessed so the next fetch cycle refreshes URLs
+      if (downloadResult.errorCount > 0) {
+        const failedFiles = downloadResult.errors?.map(e => e.filename).join(', ') || 'unknown';
+        console.error(`[Scheduler] ${downloadResult.errorCount} image(s) failed to download for ${orderNum}: ${failedFiles}`);
+        console.error(`[Scheduler] Aborting processing for ${orderNum} — order stays unprocessed, URLs will refresh on next fetch`);
+        
+        // If we have SOME images from a previous download, note that
+        if (downloadResult.successCount > 0) {
+          console.log(`[Scheduler] ${downloadResult.successCount} image(s) downloaded successfully, but all images are required`);
         }
+        
+        throw new Error(`Failed to download ${downloadResult.errorCount} of ${downloadResult.totalImages} images — asset URLs may have expired. Order will retry on next fetch.`);
       }
     } catch (dlError) {
+      // If it's our abort error, re-throw it
+      if (dlError.message.includes('Failed to download')) throw dlError;
+      
       console.error(`[Scheduler] Download error for ${orderNum}: ${dlError.message}`);
       if (localOrder.downloadPath) {
         console.log(`[Scheduler] Falling back to previous download path: ${localOrder.downloadPath}`);
@@ -375,6 +430,22 @@ class SchedulerService {
       errorCount: results.filter(r => !r.success).length,
       results,
     };
+  }
+
+  /**
+   * Get per-gallery configuration from the database.
+   */
+  async _getGalleryConfig(gallery) {
+    if (!gallery) return { teamEnabled: false, autoProcess: false, folderSort: null };
+    try {
+      const databaseService = require('./database');
+      const db = databaseService.getDb();
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'gallerySettings'").get();
+      const allSettings = row ? JSON.parse(row.value) : {};
+      return allSettings[gallery] || { teamEnabled: false, autoProcess: false, folderSort: null };
+    } catch (err) {
+      return { teamEnabled: false, autoProcess: false, folderSort: null };
+    }
   }
 }
 

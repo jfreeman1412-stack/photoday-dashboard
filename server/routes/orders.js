@@ -182,14 +182,26 @@ router.get('/meta/teams', async (req, res) => {
   }
 });
 
-// ─── GALLERY SETTINGS (team-enabled toggle) ─────────────────
+// ─── GALLERY SETTINGS (per-gallery config) ──────────────────
 router.get('/meta/gallery-settings', async (req, res) => {
   try {
     const databaseService = require('../services/database');
     const db = databaseService.getDb();
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'teamEnabledGalleries'").get();
-    const galleries = row ? JSON.parse(row.value) : [];
-    res.json({ teamEnabledGalleries: galleries });
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'gallerySettings'").get();
+    const settings = row ? JSON.parse(row.value) : {};
+
+    // Also return legacy teamEnabledGalleries for backward compat
+    const legacyRow = db.prepare("SELECT value FROM settings WHERE key = 'teamEnabledGalleries'").get();
+    const legacyTeamEnabled = legacyRow ? JSON.parse(legacyRow.value) : [];
+
+    // Merge legacy into new format if needed
+    for (const gallery of legacyTeamEnabled) {
+      if (!settings[gallery]) {
+        settings[gallery] = { teamEnabled: true, autoProcess: false, folderSort: null };
+      }
+    }
+
+    res.json({ gallerySettings: settings });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -197,24 +209,36 @@ router.get('/meta/gallery-settings', async (req, res) => {
 
 router.put('/meta/gallery-settings', async (req, res) => {
   try {
-    const { gallery, enabled } = req.body;
+    const { gallery, settings } = req.body;
     if (!gallery) return res.status(400).json({ error: 'Gallery name required' });
 
     const databaseService = require('../services/database');
     const db = databaseService.getDb();
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'teamEnabledGalleries'").get();
-    let galleries = row ? JSON.parse(row.value) : [];
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'gallerySettings'").get();
+    const allSettings = row ? JSON.parse(row.value) : {};
 
-    if (enabled && !galleries.includes(gallery)) {
-      galleries.push(gallery);
-    } else if (!enabled) {
-      galleries = galleries.filter(g => g !== gallery);
+    // Update this gallery's settings
+    allSettings[gallery] = {
+      ...(allSettings[gallery] || {}),
+      ...settings,
+    };
+
+    // Remove gallery entry if all settings are default/off
+    const gs = allSettings[gallery];
+    if (!gs.teamEnabled && !gs.autoProcess && (!gs.folderSort || gs.folderSort.length === 0)) {
+      delete allSettings[gallery];
     }
 
-    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('teamEnabledGalleries', ?, datetime('now'))").run(JSON.stringify(galleries));
+    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('gallerySettings', ?, datetime('now'))").run(JSON.stringify(allSettings));
 
-    console.log(`[GallerySettings] Team processing ${enabled ? 'enabled' : 'disabled'} for "${gallery}"`);
-    res.json({ success: true, teamEnabledGalleries: galleries });
+    // Also update legacy teamEnabledGalleries for backward compat
+    const teamEnabled = Object.entries(allSettings)
+      .filter(([_, s]) => s.teamEnabled)
+      .map(([name]) => name);
+    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('teamEnabledGalleries', ?, datetime('now'))").run(JSON.stringify(teamEnabled));
+
+    console.log(`[GallerySettings] Updated settings for "${gallery}":`, JSON.stringify(settings));
+    res.json({ success: true, gallerySettings: allSettings });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

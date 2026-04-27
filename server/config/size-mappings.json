@@ -26,16 +26,6 @@
       "productName": "8x10 Team Photo"
     },
     {
-      "externalId": "10",
-      "size": "5x7",
-      "productName": "5x7 Player Photo"
-    },
-    {
-      "externalId": "11",
-      "size": "7x5",
-      "productName": "5x7 Team Photo"
-    },
-    {
       "externalId": "13",
       "size": "5x8",
       "productName": "Trading Cards"
@@ -54,6 +44,36 @@
       "externalId": "27",
       "size": "8x10",
       "productName": "4 - 3.5x5 Prints"
+    },
+    {
+      "externalId": "32",
+      "size": "8x26",
+      "productName": "Small Pano"
+    },
+    {
+      "externalId": "33",
+      "size": "10x36",
+      "productName": "Medium Pano"
+    },
+    {
+      "externalId": "34",
+      "size": "12x40",
+      "productName": "Largo Pano"
+    },
+    {
+      "externalId": "10",
+      "size": "5x8",
+      "productName": "5x7 Individual"
+    },
+    {
+      "externalId": "11",
+      "size": "8x5",
+      "productName": "5x7 Team Photo"
+    },
+    {
+      "externalId": "22",
+      "size": "8x11",
+      "productName": "Memory Mate Plaque"
     }
   ]
 }
