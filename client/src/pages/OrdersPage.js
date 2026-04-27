@@ -207,8 +207,18 @@ export default function OrdersPage() {
     clearMessages();
     setLoading(true);
     try {
-      await api.processOrderByNum(orderNum);
-      setSuccess(`Order ${orderNum} processed successfully`);
+      // If team filter is active on a team-enabled gallery, process by team
+      if (teamFilter && teamFilter !== 'all' && teamFilter !== 'no_team' && teamEnabledGalleries.includes(galleryFilter)) {
+        const result = await api.processOrderByTeam(orderNum, teamFilter);
+        if (result.allProcessed) {
+          setSuccess(`Order ${orderNum} fully processed (all teams done) → ShipStation`);
+        } else {
+          setSuccess(`Order ${orderNum} — team "${teamFilter}" processed. More teams pending.`);
+        }
+      } else {
+        await api.processOrderByNum(orderNum);
+        setSuccess(`Order ${orderNum} processed successfully`);
+      }
       await loadCounts();
       await loadOrders('unprocessed');
       await loadOrders('processed');
@@ -223,11 +233,26 @@ export default function OrdersPage() {
     clearMessages();
     setLoading(true);
     try {
-      const options = galleryFilter !== 'all' ? { gallery: galleryFilter } : {};
-      const result = await api.processAllOrders(options);
-      setProcessResults(result);
-      const label = galleryFilter !== 'all' ? ` from "${galleryFilter}"` : '';
-      setSuccess(`Processed ${result.successCount}/${result.total} orders${label}`);
+      // If team filter is active, process each order by team
+      if (teamFilter && teamFilter !== 'all' && teamFilter !== 'no_team' && teamEnabledGalleries.includes(galleryFilter)) {
+        let successCount = 0;
+        let errorCount = 0;
+        for (const order of filteredOrders) {
+          try {
+            await api.processOrderByTeam(order.orderNum, teamFilter);
+            successCount++;
+          } catch (err) {
+            errorCount++;
+          }
+        }
+        setSuccess(`Processed ${successCount}/${filteredOrders.length} orders for team "${teamFilter}"${errorCount > 0 ? ` (${errorCount} errors)` : ''}`);
+      } else {
+        const options = galleryFilter !== 'all' ? { gallery: galleryFilter } : {};
+        const result = await api.processAllOrders(options);
+        setProcessResults(result);
+        const label = galleryFilter !== 'all' ? ` from "${galleryFilter}"` : '';
+        setSuccess(`Processed ${result.successCount}/${result.total} orders${label}`);
+      }
       await loadCounts();
       await loadOrders('unprocessed');
       await loadOrders('processed');
@@ -479,6 +504,9 @@ export default function OrdersPage() {
   // ─── Process button label ───────────────────────────────
   const processButtonLabel = () => {
     const count = filteredOrders.length;
+    if (teamFilter && teamFilter !== 'all' && teamFilter !== 'no_team' && teamEnabledGalleries.includes(galleryFilter)) {
+      return `Process "${teamFilter}" (${count})`;
+    }
     if (galleryFilter !== 'all') {
       return `Process "${galleryFilter}" (${count})`;
     }
@@ -694,6 +722,20 @@ export default function OrdersPage() {
               </label>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 24, marginTop: -6 }}>
                 Enable team filter and per-team processing for this gallery
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={getGalleryConfig(showGalleryConfig).skipShipStation || false}
+                  onChange={async (e) => {
+                    try {
+                      const result = await api.updateGallerySettings(showGalleryConfig, { skipShipStation: e.target.checked });
+                      setGallerySettings(result.gallerySettings || {});
+                    } catch (err) { setError(err.message); }
+                  }} />
+                <span style={{ fontWeight: 600 }}>Skip ShipStation</span>
+              </label>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 24, marginTop: -6 }}>
+                Hand delivery — no shipping labels needed. Orders go to Awaiting Shipment for manual completion.
               </div>
 
               {getGalleryConfig(showGalleryConfig).autoProcess && getGalleryConfig(showGalleryConfig).teamEnabled && (

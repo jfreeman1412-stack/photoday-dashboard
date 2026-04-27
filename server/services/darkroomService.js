@@ -214,11 +214,18 @@ class DarkroomService {
   /**
    * Write a txt file to disk.
    */
-  async writeTxtFile(orderData, outputDir) {
+  async writeTxtFile(orderData, outputDir, filenameSuffix = '') {
     const dir = outputDir || config.paths.txtOutput;
     await fs.ensureDir(dir);
 
-    const filename = await this.generateFileName(orderData);
+    let filename = await this.generateFileName(orderData);
+    if (filenameSuffix) {
+      // Insert suffix before the extension
+      const ext = path.extname(filename);
+      const base = filename.slice(0, -ext.length);
+      filename = `${base}${filenameSuffix}${ext}`;
+    }
+
     const filePath = path.join(dir, filename);
     const content = this.generateTxtContent(orderData);
 
@@ -309,7 +316,8 @@ class DarkroomService {
     };
 
     console.log(`[Darkroom] Writing txt file...`);
-    const result = await this.writeTxtFile(orderData, orderDir);
+    const suffix = options.filenameSuffix || '';
+    const result = await this.writeTxtFile(orderData, orderDir, suffix);
     console.log(`[Darkroom] Txt file written: ${result.filePath}`);
 
     return {

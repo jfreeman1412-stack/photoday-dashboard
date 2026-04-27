@@ -133,6 +133,11 @@ class ApiService {
   processAllOrders(options = {}) {
     return this._fetch('/orders/process-all', { method: 'POST', body: JSON.stringify(options) });
   }
+  processOrderByTeam(orderNum, team) {
+    return this._fetch(`/orders/process-team/${orderNum}`, {
+      method: 'POST', body: JSON.stringify({ team }),
+    });
+  }
 
   // Ship orders
   shipOrderByNum(orderNum, carrier, trackingNumber) {

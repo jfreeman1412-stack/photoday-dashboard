@@ -24,7 +24,7 @@ class PackingSlipService {
    * @param {string} orderDir - Folder where images are stored
    * @returns {object} { filePath, filename }
    */
-  async generateSlip(order, orderDir) {
+  async generateSlip(order, orderDir, teamOptions = {}) {
     const dest = order.shipping?.destination || {};
     const returnAddr = order.shipping?.return || {};
     const shippingOption = order.shipping?.option?.name || 'Standard';
@@ -32,6 +32,10 @@ class PackingSlipService {
     const studioName = order.studio?.name || '';
     const studioEmail = order.studio?.email || '';
     const studioPhone = order.studio?.phone || '';
+
+    // Team filtering options
+    const activeTeam = teamOptions.team || null;
+    const activeTeamItemIds = new Set(teamOptions.teamItems || []);
 
     // Load configurable highlight colors
     const highlightColors = await specialtyService.getHighlightColors();
@@ -269,6 +273,10 @@ class PackingSlipService {
       const itemQty = item.quantity || 1;
       const isHighQty = itemQty > 1;
 
+      // Team opacity — active team items at 100%, other team items faded
+      const isActiveTeamItem = !activeTeam || activeTeamItemIds.has(item.id);
+      const itemOpacity = isActiveTeamItem ? 1.0 : 0.3;
+
       // Highlight background for specialty or qty > 1
       if (isSpecialty || isHighQty) {
         const highlightColor = isSpecialty ? highlightColors.specialty : highlightColors.quantity;
@@ -346,13 +354,14 @@ class PackingSlipService {
 
       const itemSvg = Buffer.from(
         `<svg width="${textWidth + 10}" height="${thumbSize + 10}" xmlns="http://www.w3.org/2000/svg">` +
+        `<g opacity="${itemOpacity}">` +
         `<text x="0" y="${Math.round(itemNameSize * 1.2)}" font-family="Arial, sans-serif" font-size="${itemNameSize}" font-weight="bold" fill="#222222">${itemDesc}</text>` +
         `<text x="0" y="${Math.round(itemNameSize * 2.5)}" font-family="Arial, sans-serif" font-size="${itemDetailSize}" fill="#666666">${itemSku}</text>` +
-        `<text x="0" y="${Math.round(itemNameSize * 3.6)}" font-family="Arial, sans-serif" font-size="${itemDetailSize}" fill="#888888">${imageCount} image${imageCount !== 1 ? 's' : ''}${tags ? ' • ' + tags : ''}</text>` +
+        `<text x="0" y="${Math.round(itemNameSize * 3.6)}" font-family="Arial, sans-serif" font-size="${itemDetailSize}" fill="#888888">${imageCount} image${imageCount !== 1 ? 's' : ''}${tags ? ' • ' + tags : ''}${activeTeam && !isActiveTeamItem ? ' (other team)' : ''}</text>` +
         specialtyBadge +
         `<text x="${qtyX}" y="${Math.round(itemQtySize * 1.1)}" font-family="Arial, sans-serif" font-size="${itemQtySize}" font-weight="bold" fill="${qtyColor}" text-anchor="end">${itemQty}</text>` +
         qtyBadge +
-        `</svg>`
+        `</g></svg>`
       );
 
       composites.push({
@@ -382,11 +391,12 @@ class PackingSlipService {
       .toBuffer();
 
     // Save to order folder
-    const filename = `${order.num}_packing_slip.jpg`;
+    const safeTeamName = activeTeam ? '_' + activeTeam.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_') : '';
+    const filename = `${order.num}_packing_slip${safeTeamName}.jpg`;
     const filePath = path.join(orderDir, filename);
     await fs.writeFile(filePath, finalBuffer);
 
-    console.log(`[PackingSlip] Generated ${filename} (${SLIP_WIDTH}x${SLIP_HEIGHT}px, ${itemCount} items, thumbSize=${thumbSize}px)`);
+    console.log(`[PackingSlip] Generated ${filename} (${SLIP_WIDTH}x${SLIP_HEIGHT}px, ${itemCount} items, thumbSize=${thumbSize}px${activeTeam ? ', team=' + activeTeam : ''})`);
 
     return { filePath, filename };
   }

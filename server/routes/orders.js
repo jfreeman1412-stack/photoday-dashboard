@@ -225,7 +225,7 @@ router.put('/meta/gallery-settings', async (req, res) => {
 
     // Remove gallery entry if all settings are default/off
     const gs = allSettings[gallery];
-    if (!gs.teamEnabled && !gs.autoProcess && (!gs.folderSort || gs.folderSort.length === 0)) {
+    if (!gs.teamEnabled && !gs.autoProcess && !gs.skipShipStation && (!gs.folderSort || gs.folderSort.length === 0)) {
       delete allSettings[gallery];
     }
 
@@ -343,6 +343,18 @@ router.post('/reprocess/:orderNum', async (req, res) => {
       reprocess: true,
       forceRedownload: true,
     });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Process an order for a specific team only
+router.post('/process-team/:orderNum', async (req, res) => {
+  try {
+    const { team } = req.body;
+    if (!team) return res.status(400).json({ error: 'Team name required' });
+    const result = await schedulerService.processOrderByTeam(req.params.orderNum, team, req.body);
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });

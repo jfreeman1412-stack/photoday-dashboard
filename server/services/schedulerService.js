@@ -367,9 +367,15 @@ class SchedulerService {
     // 5. Create order in ShipStation (awaiting_shipment — label not purchased)
     let shipstationResult = null;
     try {
-      const ssPayload = shipstationService.buildOrderFromPDX(order, options.shipstation || {});
-      shipstationResult = await shipstationService.createOrder(ssPayload);
-      console.log(`[Scheduler] ShipStation order created for ${orderNum}: SS#${shipstationResult.orderId}`);
+      const galleryConfig = await this._getGalleryConfig(order.gallery);
+      if (galleryConfig.skipShipStation) {
+        console.log(`[Scheduler] Skipping ShipStation for ${orderNum} (gallery setting: hand delivery)`);
+        shipstationResult = { skipped: true };
+      } else {
+        const ssPayload = shipstationService.buildOrderFromPDX(order, options.shipstation || {});
+        shipstationResult = await shipstationService.createOrder(ssPayload);
+        console.log(`[Scheduler] ShipStation order created for ${orderNum}: SS#${shipstationResult.orderId}`);
+      }
     } catch (ssError) {
       console.error(`[Scheduler] ShipStation creation failed for ${orderNum}:`, ssError.message);
       shipstationResult = { error: ssError.message };
@@ -429,6 +435,172 @@ class SchedulerService {
       successCount: results.filter(r => r.success).length,
       errorCount: results.filter(r => !r.success).length,
       results,
+    };
+  }
+
+  /**
+   * Process an order for a specific team only.
+   * Only downloads/processes items matching the team tag.
+   * Order stays as 'partially_processed' until all teams are done,
+   * then moves to 'processed' and goes to ShipStation.
+   */
+  async processOrderByTeam(orderNum, team, options = {}) {
+    const localOrder = await orderDatabase.getOrder(orderNum);
+    if (!localOrder) throw new Error(`Order ${orderNum} not found`);
+
+    if (localOrder.status === 'shipped') {
+      throw new Error(`Order ${orderNum} is already shipped`);
+    }
+
+    const order = localOrder.orderData;
+
+    // Filter items to only those matching the team tag
+    const teamItems = (order.items || []).filter(item =>
+      (item.photoTags || []).includes(team)
+    );
+    const otherItems = (order.items || []).filter(item =>
+      !(item.photoTags || []).includes(team)
+    );
+
+    if (teamItems.length === 0) {
+      throw new Error(`No items found for team "${team}" in order ${orderNum}`);
+    }
+
+    console.log(`[Scheduler] Processing ${orderNum} for team "${team}": ${teamItems.length} items (${otherItems.length} other team items)`);
+
+    // Create a modified order with only the team's items for download/imposition
+    const teamOrder = { ...order, items: teamItems, _currentTeam: team };
+
+    // 1. Download team items only
+    let downloadResult;
+    try {
+      downloadResult = await fileService.downloadOrderImages(teamOrder, options);
+      if (downloadResult.errorCount > 0) {
+        const failedFiles = downloadResult.errors?.map(e => e.filename).join(', ') || 'unknown';
+        console.error(`[Scheduler] ${downloadResult.errorCount} image(s) failed for team "${team}": ${failedFiles}`);
+        throw new Error(`Failed to download ${downloadResult.errorCount} images for team "${team}"`);
+      }
+    } catch (dlError) {
+      if (dlError.message.includes('Failed to download')) throw dlError;
+      throw dlError;
+    }
+
+    // 2. Apply imposition for team items only
+    let impositionResults = [];
+    try {
+      impositionResults = await impositionService.processOrder(teamOrder, downloadResult.orderDir);
+      const imposedCount = impositionResults.filter(r => r.imposed).length;
+      if (imposedCount > 0) {
+        console.log(`[Scheduler] Imposition: ${imposedCount} item(s) composed for ${orderNum} team "${team}"`);
+      }
+    } catch (impError) {
+      console.error(`[Scheduler] Imposition error for ${orderNum} team "${team}":`, impError.message);
+    }
+
+    // 3. Generate per-team packing slip (team items at 100%, others faded)
+    let packingSlipResult = null;
+    try {
+      packingSlipResult = await packingSlipService.generateSlip(order, downloadResult.orderDir, {
+        team,
+        teamItems: teamItems.map(i => i.id),
+      });
+      console.log(`[Scheduler] Team packing slip for ${orderNum}/${team}: ${packingSlipResult.filename}`);
+    } catch (psError) {
+      console.error(`[Scheduler] Team packing slip error for ${orderNum}/${team}:`, psError.message);
+    }
+
+    // 4. Generate per-team Darkroom txt
+    let txtResult = null;
+    try {
+      const safeTeam = team.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_');
+      txtResult = await darkroomService.processOrder(teamOrder, {
+        ...options,
+        orderDir: downloadResult.orderDir,
+        packingSlipPath: packingSlipResult?.filePath || null,
+        filenameSuffix: `_${safeTeam}`,
+      });
+      console.log(`[Scheduler] Team txt for ${orderNum}/${team}: ${txtResult.filePath}`);
+    } catch (txtError) {
+      console.error(`[Scheduler] Team txt error for ${orderNum}/${team}:`, txtError.message);
+    }
+
+    // 5. Mark the team's items as processed in the database
+    try {
+      const db = require('./database').getDb();
+      for (const item of teamItems) {
+        db.prepare(`
+          UPDATE order_items SET processed = 1, processed_at = datetime('now')
+          WHERE order_num = ? AND item_uuid = ?
+        `).run(orderNum, item.id);
+      }
+    } catch (dbErr) {
+      console.error(`[Scheduler] DB update error for team items:`, dbErr.message);
+    }
+
+    // 6. Check if ALL items are now processed
+    const allItems = order.items || [];
+    const processedTeamIds = new Set(teamItems.map(i => i.id));
+
+    // Get already-processed items from DB
+    const db = require('./database').getDb();
+    const dbItems = db.prepare('SELECT item_uuid, processed FROM order_items WHERE order_num = ?').all(orderNum);
+    const allProcessed = dbItems.every(i => i.processed === 1 || processedTeamIds.has(i.item_uuid));
+
+    if (allProcessed) {
+      console.log(`[Scheduler] All teams processed for ${orderNum} — finalizing order`);
+
+      // Check if this gallery skips ShipStation
+      const galleryConfig = await this._getGalleryConfig(order.gallery);
+      let shipstationResult = null;
+
+      if (galleryConfig.skipShipStation) {
+        console.log(`[Scheduler] Skipping ShipStation for ${orderNum} (gallery setting: hand delivery)`);
+        shipstationResult = { skipped: true };
+      } else {
+        // Create ShipStation order (full order, all items)
+        try {
+          const ssPayload = shipstationService.buildOrderFromPDX(order, options.shipstation || {});
+          shipstationResult = await shipstationService.createOrder(ssPayload);
+          console.log(`[Scheduler] ShipStation order created for ${orderNum}: SS#${shipstationResult.orderId}`);
+        } catch (ssError) {
+          console.error(`[Scheduler] ShipStation creation failed for ${orderNum}:`, ssError.message);
+          shipstationResult = { error: ssError.message };
+        }
+      }
+
+      // Mark as fully processed in PhotoDay
+      try {
+        await photodayService.markAsProcessed(orderNum);
+      } catch (pdErr) {
+        console.warn(`[Scheduler] PhotoDay mark processed for ${orderNum}: ${pdErr.message}`);
+      }
+
+      // Update local database to fully processed
+      await orderDatabase.markProcessed(orderNum, {
+        txtFile: txtResult?.filePath || null,
+        packingSlip: packingSlipResult?.filePath || null,
+        downloadPath: downloadResult.orderDir,
+        shipstationOrderId: shipstationResult?.orderId || null,
+        shipstationError: shipstationResult?.error || null,
+      });
+    } else {
+      // Mark as partially processed
+      await orderDatabase.updateOrder(orderNum, {
+        status: 'partially_processed',
+        downloadPath: downloadResult.orderDir,
+      });
+      console.log(`[Scheduler] Order ${orderNum} partially processed — team "${team}" done, more teams pending`);
+    }
+
+    return {
+      orderNum,
+      team,
+      teamItemCount: teamItems.length,
+      allProcessed,
+      downloads: downloadResult,
+      imposition: impositionResults,
+      txtFile: txtResult,
+      packingSlip: packingSlipResult,
     };
   }
 
