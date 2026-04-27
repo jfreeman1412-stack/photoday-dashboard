@@ -374,6 +374,23 @@ export default function OrdersPage() {
                             {tag}
                           </span>
                         ))}
+                        {(status === 'processed' || status === 'shipped') && item.id && (
+                          <button className="btn btn-sm btn-secondary"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              clearMessages(); setLoading(true);
+                              try {
+                                const result = await api.reprintItem(order.orderNum, item.id);
+                                setSuccess(`Reprinted ${item.description}: ${result.txtFile || 'done'}`);
+                              } catch (err) { setError(err.message); }
+                              finally { setLoading(false); }
+                            }}
+                            disabled={loading}
+                            style={{ padding: '0px 4px', fontSize: 9, lineHeight: '16px', minWidth: 0 }}
+                            title="Reprint this item only (download + imposition + txt, no packing slip)">
+                            Reprint
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>

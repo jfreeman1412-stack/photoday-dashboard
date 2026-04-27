@@ -122,6 +122,11 @@ class ApiService {
   reprocessOrder(orderNum) {
     return this._fetch(`/orders/reprocess/${orderNum}`, { method: 'POST', body: '{}' });
   }
+  reprintItem(orderNum, itemId) {
+    return this._fetch(`/orders/${orderNum}/reprint-item`, {
+      method: 'POST', body: JSON.stringify({ itemId }),
+    });
+  }
   updateOrderData(orderNum, orderData) {
     return this._fetch(`/orders/${orderNum}/update-data`, { method: 'PUT', body: JSON.stringify(orderData) });
   }

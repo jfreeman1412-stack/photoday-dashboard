@@ -359,6 +359,151 @@ router.post('/process-all', async (req, res) => {
   }
 });
 
+// ─── REPRINT SINGLE ITEM ──────────────────────────────────
+router.post('/:orderNum/reprint-item', async (req, res) => {
+  try {
+    const { orderNum } = req.params;
+    const { itemId } = req.body;
+
+    if (!itemId) return res.status(400).json({ error: 'Item ID required' });
+
+    const order = await orderDatabase.getOrder(orderNum);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    let orderData = order.orderData;
+    const path = require('path');
+    const fs = require('fs-extra');
+    const photodayService = require('../services/photodayService');
+    const impositionService = require('../services/impositionService');
+    const darkroomService = require('../services/darkroomService');
+
+    // Try to fetch fresh order data from PhotoDay to get updated URLs
+    // This works if the order was resent or hasn't been marked processed yet
+    try {
+      console.log(`[Reprint] Fetching fresh order data from PhotoDay...`);
+      const freshOrders = await photodayService.getOrders();
+      const freshOrder = freshOrders.find(o => o.num === orderNum);
+      if (freshOrder) {
+        console.log(`[Reprint] Found fresh data for ${orderNum} from PhotoDay — updating stored URLs`);
+        orderData = freshOrder;
+        // Update stored order data with fresh URLs
+        await orderDatabase.saveOrder(freshOrder, order.status);
+      } else {
+        console.log(`[Reprint] Order ${orderNum} not in PhotoDay queue — using stored data`);
+      }
+    } catch (fetchErr) {
+      console.warn(`[Reprint] Could not fetch from PhotoDay: ${fetchErr.message} — using stored data`);
+    }
+
+    // Find the specific item (use fresh data if available)
+    const item = (orderData.items || []).find(i => i.id === itemId);
+    if (!item) return res.status(404).json({ error: 'Item not found in order' });
+
+    const orderDir = order.downloadPath || path.join(require('../config').paths.downloadBase, orderNum);
+    await fs.ensureDir(orderDir);
+
+    console.log(`[Reprint] Starting reprint for ${orderNum} item: ${item.description} (externalId: ${item.externalId})`);
+
+    // 1. Download just this item's images (force redownload to get latest version)
+
+    const downloadedFiles = [];
+    for (const image of item.images || []) {
+      if (!image.assetUrl) continue;
+      const filename = image.filename || `${image.id}.jpg`;
+      const savePath = path.join(orderDir, filename);
+
+      try {
+        const buffer = await photodayService.downloadAsset(image.assetUrl);
+        await fs.writeFile(savePath, buffer);
+        downloadedFiles.push({ filename, path: savePath });
+        console.log(`[Reprint] Downloaded: ${filename}`);
+      } catch (dlErr) {
+        console.error(`[Reprint] Download failed for ${filename}: ${dlErr.message}`);
+        if (await fs.pathExists(savePath)) {
+          downloadedFiles.push({ filename, path: savePath });
+          console.log(`[Reprint] Using existing file: ${filename}`);
+        } else {
+          return res.status(500).json({ error: `Failed to download ${filename}: ${dlErr.message}` });
+        }
+      }
+    }
+
+    // 2. Apply imposition if this product has a layout mapping
+    try {
+      const reprintResults = await impositionService.processOrder(
+        { ...orderData, items: [item] },
+        orderDir
+      );
+      const imposedCount = reprintResults.filter(r => r.imposed).length;
+      if (imposedCount > 0) {
+        console.log(`[Reprint] Imposition applied for ${item.description}`);
+      }
+    } catch (impErr) {
+      console.error(`[Reprint] Imposition error: ${impErr.message}`);
+    }
+
+    // 3. Generate a reprint-only txt file (no packing slip)
+    let txtResult = null;
+    try {
+      const customerName = photodayService.getCustomerName(orderData);
+      const specialtyService = require('../services/specialtyService');
+      const isSpecialty = await specialtyService.isSpecialty(item.externalId);
+
+      const lineItems = [];
+      if (!isSpecialty) {
+        const size = await darkroomService._getSize(item);
+        const templatePath = await darkroomService.findTemplate(item);
+
+        for (const image of item.images || []) {
+          const imagePath = path.join(orderDir, image.filename || `${image.id}.jpg`);
+          lineItems.push({
+            qty: item.quantity || 1,
+            size,
+            templatePath,
+            filePath: imagePath,
+          });
+        }
+      }
+
+      if (lineItems.length > 0) {
+        const safeDesc = (item.description || 'item').replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_');
+        const reprintFilename = `${orderNum}_reprint_${safeDesc}.txt`;
+
+        const orderDataForTxt = {
+          firstName: customerName.firstName,
+          lastName: customerName.lastName,
+          email: photodayService.getStudioEmail(orderData),
+          orderNum: orderData.num,
+          gallery: orderData.gallery || '',
+          lineItems,
+        };
+
+        const content = darkroomService.generateTxtContent(orderDataForTxt);
+        const filePath = path.join(orderDir, reprintFilename);
+        await fs.writeFile(filePath, content, 'utf-8');
+
+        txtResult = { filePath, filename: reprintFilename };
+        console.log(`[Reprint] Txt file generated: ${reprintFilename}`);
+      }
+    } catch (txtErr) {
+      console.error(`[Reprint] Txt generation error: ${txtErr.message}`);
+    }
+
+    console.log(`[Reprint] Complete for ${orderNum} - ${item.description}`);
+
+    res.json({
+      success: true,
+      orderNum,
+      item: { id: item.id, description: item.description, externalId: item.externalId },
+      downloads: downloadedFiles.length,
+      txtFile: txtResult?.filename || null,
+    });
+  } catch (error) {
+    console.error(`[Reprint] Error:`, error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── MARK SHIPPED MANUALLY ─────────────────────────────────
 router.post('/:orderNum/ship', async (req, res) => {
   try {

@@ -224,7 +224,7 @@
       "textOverlays": [
         {
           "text": "{first_name} {last_name} Order:{order_id}",
-          "x": 5.2,
+          "x": 5.4,
           "y": 3.9,
           "fontSize": 7,
           "color": "#000000",
@@ -236,7 +236,7 @@
         }
       ],
       "centerOnSheet": false,
-      "marginLeft": 0,
+      "marginLeft": 0.4,
       "marginTop": 0
     },
     {
@@ -328,15 +328,15 @@
       "marginTop": 0,
       "textOverlays": [
         {
-          "text": "{first_name} {last_name} Team: {team} Order: {order_id}",
-          "x": 7.2,
+          "text": "{first_name} {last_name} \\nTeam: {team}\\n Order: {order_id}",
+          "x": 7,
           "y": 5,
           "fontSize": 10,
           "color": "#000000",
           "autoSize": true,
           "centerAlign": true,
           "rotation": -90,
-          "width": 1.5,
+          "width": 1,
           "height": 7
         }
       ]
