@@ -40,11 +40,9 @@ class ShipStationService {
   // ─── ORDERS ───────────────────────────────────────────────
 
   async createOrder(orderData) {
-    // Strip null/undefined values recursively — ShipStation rejects null fields
     const cleaned = this._stripNulls(orderData);
     const jsonBody = JSON.stringify(cleaned);
 
-    // Use native https to bypass any axios encoding issues
     const https = require('https');
     const url = new URL(`${config.shipstation.baseUrl}/orders/createorder`);
     const authString = Buffer.from(
@@ -66,11 +64,7 @@ class ShipStationService {
         res.on('data', chunk => body += chunk);
         res.on('end', () => {
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            try {
-              resolve(JSON.parse(body));
-            } catch {
-              resolve(body);
-            }
+            try { resolve(JSON.parse(body)); } catch { resolve(body); }
           } else {
             console.error(`[ShipStation Error] ${res.statusCode}: ${body}`);
             console.error(`[ShipStation Request Body]`, jsonBody);
@@ -78,52 +72,28 @@ class ShipStationService {
           }
         });
       });
-
       req.on('error', reject);
       req.write(jsonBody);
       req.end();
     });
   }
 
-  /**
-   * Recursively remove null/undefined values from an object.
-   * ShipStation's API rejects payloads with explicit null values.
-   */
   _stripNulls(obj) {
-    if (Array.isArray(obj)) {
-      return obj.map(item => this._stripNulls(item));
-    }
+    if (Array.isArray(obj)) return obj.map(item => this._stripNulls(item));
     if (obj && typeof obj === 'object') {
       const result = {};
       for (const [key, value] of Object.entries(obj)) {
-        if (value !== null && value !== undefined) {
-          result[key] = this._stripNulls(value);
-        }
+        if (value !== null && value !== undefined) result[key] = this._stripNulls(value);
       }
       return result;
     }
     return obj;
   }
 
-  async getOrder(orderId) {
-    const { data } = await this.client.get(`/orders/${orderId}`);
-    return data;
-  }
-
-  async listOrders(params = {}) {
-    const { data } = await this.client.get('/orders', { params });
-    return data;
-  }
-
-  async listShipments(params = {}) {
-    const { data } = await this.client.get('/shipments', { params });
-    return data;
-  }
-
-  async deleteOrder(orderId) {
-    const { data } = await this.client.delete(`/orders/${orderId}`);
-    return data;
-  }
+  async getOrder(orderId) { const { data } = await this.client.get(`/orders/${orderId}`); return data; }
+  async listOrders(params = {}) { const { data } = await this.client.get('/orders', { params }); return data; }
+  async listShipments(params = {}) { const { data } = await this.client.get('/shipments', { params }); return data; }
+  async deleteOrder(orderId) { const { data } = await this.client.delete(`/orders/${orderId}`); return data; }
 
   async deleteOrders(orderIds) {
     const results = [];
@@ -138,48 +108,27 @@ class ShipStationService {
     return results;
   }
 
-  async markAsShipped(shipmentData) {
-    const { data } = await this.client.post('/orders/markasshipped', shipmentData);
-    return data;
-  }
+  async markAsShipped(shipmentData) { const { data } = await this.client.post('/orders/markasshipped', shipmentData); return data; }
 
   // ─── CARRIERS ─────────────────────────────────────────────
 
-  async listCarriers() {
-    const { data } = await this.client.get('/carriers');
-    return data;
-  }
-
-  async listServices(carrierCode) {
-    const { data } = await this.client.get('/carriers/listservices', { params: { carrierCode } });
-    return data;
-  }
-
-  async listPackages(carrierCode) {
-    const { data } = await this.client.get('/carriers/listpackages', { params: { carrierCode } });
-    return data;
-  }
-
-  async getRates(rateData) {
-    const { data } = await this.client.post('/shipments/getrates', rateData);
-    return data;
-  }
+  async listCarriers() { const { data } = await this.client.get('/carriers'); return data; }
+  async listServices(carrierCode) { const { data } = await this.client.get('/carriers/listservices', { params: { carrierCode } }); return data; }
+  async listPackages(carrierCode) { const { data } = await this.client.get('/carriers/listpackages', { params: { carrierCode } }); return data; }
+  async getRates(rateData) { const { data } = await this.client.post('/shipments/getrates', rateData); return data; }
 
   // ─── BUILD ORDER FROM PDX DATA ────────────────────────────
 
   /**
    * Build a ShipStation order from a PDX order object.
-   * Creates the order in awaiting_shipment status — label is NOT purchased.
-   * User reviews and buys labels manually in ShipStation.
+   * Uses the packaging rules engine to determine dimensions, weight, and service.
    */
-  buildOrderFromPDX(pdxOrder, overrides = {}) {
+  async buildOrderFromPDX(pdxOrder, overrides = {}) {
     const shipping = pdxOrder.shipping || {};
     const dest = shipping.destination || {};
     const ret = shipping.return || {};
     const studio = pdxOrder.studio || {};
 
-    // Build ship-to address from PDX destination
-    // Fall back to studio address if destination is empty (e.g., bulk/test orders)
     const hasDestAddress = dest.address1 && dest.city && dest.state && dest.zipCode;
     const shipTo = {
       name: dest.recipient || `${studio.name || 'Customer'}`,
@@ -193,7 +142,6 @@ class ShipStationService {
       phone: dest.phone || dest.phoneNumber || studio.phone || '',
     };
 
-    // Build bill-to from return info or studio address
     const billTo = {
       name: ret.name || ret.recipient || studio.name || '',
       street1: ret.address1 || studio.address1 || 'Address Required',
@@ -205,12 +153,10 @@ class ShipStationService {
       phone: ret.phone || studio.phone || '',
     };
 
-    // Log address status for debugging
     if (!hasDestAddress) {
       console.warn(`[ShipStation] Order ${pdxOrder.num}: No shipping destination — using studio address as placeholder`);
     }
 
-    // Map all PDX items to ShipStation line items
     const items = [];
     for (const item of pdxOrder.items || []) {
       items.push({
@@ -226,7 +172,6 @@ class ShipStationService {
       });
     }
 
-    // Build internal notes with gallery and order context
     const internalNotes = [
       `Gallery: ${pdxOrder.gallery || 'N/A'}`,
       `Studio: ${pdxOrder.studio?.name || 'N/A'}`,
@@ -235,26 +180,45 @@ class ShipStationService {
       pdxOrder.groups?.length > 1 ? `Bulk Order (${pdxOrder.groups.length} groups)` : 'Dropship Order',
     ].join(' | ');
 
+    // ─── Use Packaging Rules Engine ─────────────────────
+    let packaging;
+    try {
+      const packagingService = require('./packagingService');
+      packaging = await packagingService.determinePackaging(pdxOrder);
+      console.log(`[ShipStation] Packaging for ${pdxOrder.num}: ${packaging.packageTypeName} (${packaging.dimensions.length}x${packaging.dimensions.width}x${packaging.dimensions.height}") ${packaging.weight.value}oz — ${packaging.carrierCode}/${packaging.serviceCode}/${packaging.packageCode}`);
+      if (packaging.notes?.length > 0) {
+        console.log(`[ShipStation] Packaging notes: ${packaging.notes.join('; ')}`);
+      }
+    } catch (pkgErr) {
+      console.error(`[ShipStation] Packaging engine error: ${pkgErr.message} — using defaults`);
+      packaging = {
+        dimensions: { length: 10, width: 8, height: 0.5, units: 'inches' },
+        weight: { value: 4, units: 'ounces' },
+        carrierCode: 'stamps_com',
+        serviceCode: 'usps_first_class_mail',
+        packageCode: 'large_envelope_or_flat',
+      };
+    }
+
+    // Allow manual overrides to take precedence
+    const finalWeight = overrides.weight || packaging.weight;
+    const finalDims = overrides.dimensions || packaging.dimensions;
+
     const payload = {
       orderNumber: pdxOrder.num,
       orderKey: pdxOrder.id,
       orderDate: pdxOrder.placedAt,
       orderStatus: 'awaiting_shipment',
       customerEmail: pdxOrder.studio?.email || '',
+      carrierCode: packaging.carrierCode,
+      serviceCode: packaging.serviceCode,
+      packageCode: packaging.packageCode,
       billTo,
       shipTo,
       items,
-      internalNotes,
-      weight: {
-        value: overrides.weight?.value || 4,
-        units: overrides.weight?.units || 'ounces',
-      },
-      dimensions: {
-        length: overrides.dimensions?.length || 10,
-        width: overrides.dimensions?.width || 8,
-        height: overrides.dimensions?.height || 0.5,
-        units: overrides.dimensions?.units || 'inches',
-      },
+      internalNotes: internalNotes + ` | Pkg: ${packaging.packageTypeName}`,
+      weight: finalWeight,
+      dimensions: finalDims,
       confirmation: 'none',
     };
 

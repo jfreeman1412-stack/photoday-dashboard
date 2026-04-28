@@ -335,4 +335,52 @@ router.delete('/imposition/mappings/:externalId', async (req, res) => {
   }
 });
 
+// ─── PACKAGING CONFIG ───────────────────────────────────────
+const packagingService = require('../services/packagingService');
+
+router.get('/packaging', async (req, res) => {
+  try {
+    const config = await packagingService.getConfig();
+    res.json(config);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.get('/packaging/weights', async (req, res) => {
+  try {
+    const weights = await packagingService.getProductWeights();
+    res.json(weights);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.put('/packaging/weights/:externalId', async (req, res) => {
+  try {
+    const weights = await packagingService.setProductWeight(req.params.externalId, req.body);
+    res.json({ success: true, weights });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.delete('/packaging/weights/:externalId', async (req, res) => {
+  try {
+    const weights = await packagingService.deleteProductWeight(req.params.externalId);
+    res.json({ success: true, weights });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.put('/packaging', async (req, res) => {
+  try {
+    const config = await packagingService.updateConfig(req.body);
+    res.json({ success: true, config });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.post('/packaging/test/:orderNum', async (req, res) => {
+  try {
+    const orderDatabase = require('../services/orderDatabase');
+    const order = await orderDatabase.getOrder(req.params.orderNum);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    const result = await packagingService.determinePackaging(order.orderData);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 module.exports = router;

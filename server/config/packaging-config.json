@@ -1,0 +1,218 @@
+{
+  "productWeights": {
+    "6": {
+      "weight": 1.5,
+      "name": "Memory Mate",
+      "category": "flat"
+    },
+    "7": {
+      "weight": 1,
+      "name": "Key Chain",
+      "category": "rigid"
+    },
+    "8": {
+      "weight": 1.5,
+      "name": "8x10 Individual",
+      "category": "flat"
+    },
+    "9": {
+      "weight": 1.5,
+      "name": "8x10 Team Photo",
+      "category": "flat"
+    },
+    "10": {
+      "weight": 0.5,
+      "name": "5x7 Individual Print",
+      "category": "flat"
+    },
+    "11": {
+      "weight": 0.5,
+      "name": "5x7 Team Photo",
+      "category": "flat"
+    },
+    "12": {
+      "weight": 0.5,
+      "name": "8 Wallets",
+      "category": "flat"
+    },
+    "13": {
+      "weight": 0.5,
+      "name": "Collector Cards",
+      "category": "rigid"
+    },
+    "15": {
+      "weight": 0.5,
+      "name": "2 Large Magnets",
+      "category": "flat"
+    },
+    "16": {
+      "weight": 1,
+      "name": "Photo Button",
+      "category": "rigid"
+    },
+    "17": {
+      "weight": 2,
+      "name": "4 Mini Magnets",
+      "category": "flat"
+    },
+    "18": {
+      "weight": 0.5,
+      "name": "Bagtag",
+      "category": "flat"
+    },
+    "19": {
+      "weight": 4,
+      "name": "Mouse Pad",
+      "category": "rigid"
+    },
+    "20": {
+      "weight": 12,
+      "name": "Coffee Mug",
+      "category": "bulky"
+    },
+    "21": {
+      "weight": 6,
+      "name": "5x7 Plaque",
+      "category": "rigid"
+    },
+    "22": {
+      "weight": 8,
+      "name": "8x10 Plaque",
+      "category": "rigid"
+    },
+    "25": {
+      "weight": 0,
+      "name": "Digital Download",
+      "category": "digital"
+    },
+    "27": {
+      "weight": 0.5,
+      "name": "4-3.5x5 Prints",
+      "category": "flat"
+    },
+    "32": {
+      "weight": 3,
+      "name": "8x24 Pano",
+      "category": "pano"
+    },
+    "33": {
+      "weight": 4,
+      "name": "10x30 Pano",
+      "category": "pano"
+    },
+    "35": {
+      "weight": 1,
+      "name": "Trading Cards",
+      "category": "rigid"
+    },
+    "36": {
+      "weight": 1,
+      "name": "Item 36",
+      "category": "flat"
+    },
+    "45": {
+      "weight": 1,
+      "name": "Item 45",
+      "category": "flat"
+    }
+  },
+  "packageBundles": {
+    "1": {
+      "name": "Gold Package",
+      "weight": 8,
+      "forcePackage": true
+    },
+    "2": {
+      "name": "Silver Package",
+      "weight": 6,
+      "forcePackage": false
+    },
+    "3": {
+      "name": "Bronze Package",
+      "weight": 2,
+      "forcePackage": false
+    }
+  },
+  "packagingTypes": {
+    "flat_6x8": {
+      "name": "6x8 Flat Mailer",
+      "length": 6,
+      "width": 8,
+      "height": 0.5,
+      "baseWeight": 1,
+      "service": "large_envelope_or_flat"
+    },
+    "flat_9x11": {
+      "name": "9x11 Flat Mailer",
+      "length": 9,
+      "width": 11,
+      "height": 0.5,
+      "baseWeight": 2,
+      "service": "large_envelope_or_flat"
+    },
+    "pano_tube": {
+      "name": "Pano Tube",
+      "length": 12,
+      "width": 2,
+      "height": 2,
+      "baseWeight": 3,
+      "service": "package"
+    },
+    "small_box": {
+      "name": "Small Box",
+      "length": 6,
+      "width": 6,
+      "height": 6,
+      "baseWeight": 4,
+      "service": "package"
+    },
+    "medium_box": {
+      "name": "Medium Box",
+      "length": 12,
+      "width": 10,
+      "height": 2,
+      "baseWeight": 4,
+      "service": "package"
+    },
+    "pano_frame_sm": {
+      "name": "8x24 Pano Frame",
+      "length": 26,
+      "width": 10,
+      "height": 2,
+      "baseWeight": 8,
+      "service": "package"
+    },
+    "pano_frame_lg": {
+      "name": "10x30 Pano Frame",
+      "length": 31,
+      "width": 11,
+      "height": 2,
+      "baseWeight": 10,
+      "service": "package"
+    },
+    "large_box": {
+      "name": "Large Box",
+      "length": 14,
+      "width": 10,
+      "height": 6,
+      "baseWeight": 6,
+      "service": "package"
+    }
+  },
+  "forcePackageSKUs": [
+    "13",
+    "16",
+    "7",
+    "32",
+    "33",
+    "21",
+    "22",
+    "19",
+    "20",
+    "35"
+  ],
+  "magnetPackageThreshold": 3,
+  "magnetSKU": "15",
+  "framedPanoSmallSKUs": [],
+  "framedPanoLargeSKUs": []
+}

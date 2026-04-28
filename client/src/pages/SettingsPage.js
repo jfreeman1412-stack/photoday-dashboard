@@ -61,6 +61,12 @@ export default function SettingsPage({ user }) {
   const [appSettingsForm, setAppSettingsForm] = useState({});
   const [showSecrets, setShowSecrets] = useState({});
 
+  // Packaging config
+  const [packagingConfig, setPackagingConfig] = useState(null);
+  const [newWeight, setNewWeight] = useState({ externalId: '', weight: '', name: '', category: 'flat' });
+  const [packagingTestOrder, setPackagingTestOrder] = useState('');
+  const [packagingTestResult, setPackagingTestResult] = useState(null);
+
   const clearMessages = () => { setError(null); setSuccess(null); };
 
   // ─── Load data ──────────────────────────────────────────
@@ -140,7 +146,14 @@ export default function SettingsPage({ user }) {
     } catch (err) { /* silent */ }
   }, [isAdmin]);
 
-  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); loadPaths(); loadAppSettings(); loadUsers(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty, loadPaths, loadAppSettings, loadUsers]);
+  const loadPackaging = useCallback(async () => {
+    try {
+      const data = await api._fetch('/settings/packaging');
+      setPackagingConfig(data);
+    } catch (err) { /* silent */ }
+  }, []);
+
+  useEffect(() => { loadImposition(); loadTemplates(); loadSizeMappings(); loadFileNameConfig(); loadFolderSort(); loadSpecialty(); loadPaths(); loadAppSettings(); loadUsers(); loadPackaging(); }, [loadImposition, loadTemplates, loadSizeMappings, loadFileNameConfig, loadFolderSort, loadSpecialty, loadPaths, loadAppSettings, loadUsers, loadPackaging]);
 
   // ─── Layout form helpers ────────────────────────────────
   const updateField = (field, value) => setLayoutForm(prev => ({ ...prev, [field]: value }));
@@ -390,6 +403,7 @@ export default function SettingsPage({ user }) {
         <button className={`tab ${activeSection === 'templates' ? 'active' : ''}`} onClick={() => setActiveSection('templates')}>Darkroom Templates</button>
         <button className={`tab ${activeSection === 'filename' ? 'active' : ''}`} onClick={() => setActiveSection('filename')}>Filename Config</button>
         <button className={`tab ${activeSection === 'paths' ? 'active' : ''}`} onClick={() => setActiveSection('paths')}>Paths</button>
+        <button className={`tab ${activeSection === 'packaging' ? 'active' : ''}`} onClick={() => setActiveSection('packaging')}>Packaging</button>
         {isAdmin && <button className={`tab ${activeSection === 'setup' ? 'active' : ''}`} onClick={() => setActiveSection('setup')}>Setup</button>}
         {isAdmin && <button className={`tab ${activeSection === 'users' ? 'active' : ''}`} onClick={() => setActiveSection('users')}>Users</button>}
       </div>
@@ -1401,6 +1415,355 @@ export default function SettingsPage({ user }) {
         </div>
       )}
       {/* ═══ SETUP (env overrides) ══════════════════════════════ */}
+      {activeSection === 'packaging' && (
+        <div>
+          <h2 style={{ marginBottom: 16 }}>Packaging Rules Engine</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 20 }}>
+            Configure product weights and packaging rules to auto-set ShipStation dimensions, weight, and service type.
+          </p>
+
+          {/* Test Packaging */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Test Packaging</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Enter an order number to see what packaging the engine would determine.</p>
+            <div className="form-row" style={{ gap: 8 }}>
+              <input className="form-input" placeholder="Order number" value={packagingTestOrder}
+                onChange={e => setPackagingTestOrder(e.target.value)} style={{ maxWidth: 200 }} />
+              <button className="btn btn-primary" disabled={!packagingTestOrder || loading} onClick={async () => {
+                setLoading(true); setPackagingTestResult(null);
+                try {
+                  const result = await api._fetch(`/settings/packaging/test/${packagingTestOrder}`, { method: 'POST' });
+                  setPackagingTestResult(result);
+                } catch (err) { setError(err.message); }
+                finally { setLoading(false); }
+              }}>Test</button>
+            </div>
+            {packagingTestResult && (
+              <div style={{ marginTop: 12, padding: 12, background: 'rgba(76,175,80,0.1)', borderRadius: 'var(--radius-md)', fontSize: 13 }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>{packagingTestResult.packageTypeName}</div>
+                <div>Dimensions: {packagingTestResult.dimensions?.length}×{packagingTestResult.dimensions?.width}×{packagingTestResult.dimensions?.height}"</div>
+                <div>Weight: {packagingTestResult.weight?.value}oz</div>
+                <div>Carrier: {packagingTestResult.carrierCode} / {packagingTestResult.serviceCode} / {packagingTestResult.packageCode}</div>
+                {packagingTestResult.notes?.length > 0 && (
+                  <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 11 }}>
+                    {packagingTestResult.notes.map((n, i) => <div key={i}>• {n}</div>)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Product Weights */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Product Weights</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Set the weight (in ounces) and category for each product SKU.</p>
+
+            {packagingConfig && (
+              <table className="data-table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr><th>SKU</th><th>Product Name</th><th>Weight (oz)</th><th>Category</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {Object.entries(packagingConfig.productWeights || {}).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([sku, data]) => (
+                    <tr key={sku}>
+                      <td style={{ fontWeight: 600 }}>{sku}</td>
+                      <td>{data.name}</td>
+                      <td>
+                        <input className="form-input" type="number" step="0.1" value={data.weight}
+                          style={{ width: 70, fontSize: 12, padding: '2px 6px' }}
+                          onChange={async (e) => {
+                            try {
+                              await api._fetch(`/settings/packaging/weights/${sku}`, {
+                                method: 'PUT', body: JSON.stringify({ ...data, weight: parseFloat(e.target.value) || 0 }),
+                              });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }} />
+                      </td>
+                      <td>
+                        <select className="form-input" value={data.category}
+                          style={{ width: 100, fontSize: 12, padding: '2px 6px' }}
+                          onChange={async (e) => {
+                            try {
+                              await api._fetch(`/settings/packaging/weights/${sku}`, {
+                                method: 'PUT', body: JSON.stringify({ ...data, category: e.target.value }),
+                              });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }}>
+                          <option value="flat">Flat</option>
+                          <option value="rigid">Rigid</option>
+                          <option value="bulky">Bulky</option>
+                          <option value="pano">Pano</option>
+                          <option value="digital">Digital</option>
+                        </select>
+                      </td>
+                      <td>
+                        <button className="btn btn-sm btn-danger" onClick={async () => {
+                          if (!window.confirm(`Delete weight for SKU ${sku}?`)) return;
+                          try {
+                            await api._fetch(`/settings/packaging/weights/${sku}`, { method: 'DELETE' });
+                            loadPackaging();
+                          } catch (err) { setError(err.message); }
+                        }}>×</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {/* Add new weight */}
+            <div className="form-row" style={{ gap: 8, marginTop: 12 }}>
+              <input className="form-input" placeholder="SKU" value={newWeight.externalId}
+                onChange={e => setNewWeight(p => ({ ...p, externalId: e.target.value }))} style={{ width: 70 }} />
+              <input className="form-input" placeholder="Product Name" value={newWeight.name}
+                onChange={e => setNewWeight(p => ({ ...p, name: e.target.value }))} style={{ flex: 1 }} />
+              <input className="form-input" type="number" step="0.1" placeholder="oz" value={newWeight.weight}
+                onChange={e => setNewWeight(p => ({ ...p, weight: e.target.value }))} style={{ width: 70 }} />
+              <select className="form-input" value={newWeight.category}
+                onChange={e => setNewWeight(p => ({ ...p, category: e.target.value }))} style={{ width: 100 }}>
+                <option value="flat">Flat</option>
+                <option value="rigid">Rigid</option>
+                <option value="bulky">Bulky</option>
+                <option value="pano">Pano</option>
+                <option value="digital">Digital</option>
+              </select>
+              <button className="btn btn-primary" disabled={!newWeight.externalId} onClick={async () => {
+                try {
+                  await api._fetch(`/settings/packaging/weights/${newWeight.externalId}`, {
+                    method: 'PUT', body: JSON.stringify(newWeight),
+                  });
+                  setNewWeight({ externalId: '', weight: '', name: '', category: 'flat' });
+                  loadPackaging();
+                  setSuccess('Product weight added');
+                } catch (err) { setError(err.message); }
+              }}>Add</button>
+            </div>
+          </div>
+
+          {/* Packaging Types */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Packaging Types</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Package dimensions and base weights for each container type.</p>
+
+            {packagingConfig && (
+              <table className="data-table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr><th>Package</th><th>L"</th><th>W"</th><th>H"</th><th>Base Wt (oz)</th><th>Service</th></tr>
+                </thead>
+                <tbody>
+                  {Object.entries(packagingConfig.packagingTypes || {}).map(([id, pkg]) => (
+                    <tr key={id}>
+                      <td style={{ fontWeight: 600 }}>{pkg.name}</td>
+                      <td>
+                        <input className="form-input" type="number" step="0.5" value={pkg.length}
+                          style={{ width: 50, fontSize: 12, padding: '2px 4px' }}
+                          onChange={async (e) => {
+                            const updated = { ...packagingConfig.packagingTypes, [id]: { ...pkg, length: parseFloat(e.target.value) || 0 } };
+                            try {
+                              await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ packagingTypes: updated }) });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }} />
+                      </td>
+                      <td>
+                        <input className="form-input" type="number" step="0.5" value={pkg.width}
+                          style={{ width: 50, fontSize: 12, padding: '2px 4px' }}
+                          onChange={async (e) => {
+                            const updated = { ...packagingConfig.packagingTypes, [id]: { ...pkg, width: parseFloat(e.target.value) || 0 } };
+                            try {
+                              await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ packagingTypes: updated }) });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }} />
+                      </td>
+                      <td>
+                        <input className="form-input" type="number" step="0.5" value={pkg.height}
+                          style={{ width: 50, fontSize: 12, padding: '2px 4px' }}
+                          onChange={async (e) => {
+                            const updated = { ...packagingConfig.packagingTypes, [id]: { ...pkg, height: parseFloat(e.target.value) || 0 } };
+                            try {
+                              await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ packagingTypes: updated }) });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }} />
+                      </td>
+                      <td>
+                        <input className="form-input" type="number" step="1" value={pkg.baseWeight}
+                          style={{ width: 50, fontSize: 12, padding: '2px 4px' }}
+                          onChange={async (e) => {
+                            const updated = { ...packagingConfig.packagingTypes, [id]: { ...pkg, baseWeight: parseFloat(e.target.value) || 0 } };
+                            try {
+                              await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ packagingTypes: updated }) });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }} />
+                      </td>
+                      <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{pkg.service}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Force Package SKUs */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Force Package Service SKUs</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              Items with these SKUs force USPS Package service instead of Large Flat Mailer.
+            </p>
+            {packagingConfig && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {(packagingConfig.forcePackageSKUs || []).map(sku => (
+                  <span key={sku} style={{
+                    padding: '4px 10px', borderRadius: 'var(--radius-sm)',
+                    background: 'rgba(232,140,48,0.15)', color: '#e88c30', fontWeight: 600, fontSize: 12,
+                    display: 'flex', alignItems: 'center', gap: 4,
+                  }}>
+                    {sku} ({packagingConfig.productWeights?.[sku]?.name || '?'})
+                    <button style={{ background: 'none', border: 'none', color: '#e88c30', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                      onClick={async () => {
+                        const updated = (packagingConfig.forcePackageSKUs || []).filter(s => s !== sku);
+                        try {
+                          await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ forcePackageSKUs: updated }) });
+                          loadPackaging();
+                        } catch (err) { setError(err.message); }
+                      }}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="form-row" style={{ gap: 8 }}>
+              <input className="form-input" placeholder="SKU to add" id="addForcePkgSku" style={{ width: 100 }} />
+              <button className="btn btn-sm btn-primary" onClick={async () => {
+                const input = document.getElementById('addForcePkgSku');
+                const sku = input.value.trim();
+                if (!sku) return;
+                const updated = [...(packagingConfig?.forcePackageSKUs || []), sku];
+                try {
+                  await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ forcePackageSKUs: updated }) });
+                  input.value = '';
+                  loadPackaging();
+                } catch (err) { setError(err.message); }
+              }}>Add SKU</button>
+            </div>
+          </div>
+
+          {/* Magnet Threshold */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Magnet Threshold</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              This many or more magnet sets force Package service instead of Flat.
+            </p>
+            {packagingConfig && (
+              <div className="form-row" style={{ gap: 8, alignItems: 'center' }}>
+                <label style={{ fontSize: 13 }}>Magnet SKU:</label>
+                <input className="form-input" value={packagingConfig.magnetSKU || '15'} style={{ width: 60 }}
+                  onChange={async (e) => {
+                    try {
+                      await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ magnetSKU: e.target.value }) });
+                      loadPackaging();
+                    } catch (err) { setError(err.message); }
+                  }} />
+                <label style={{ fontSize: 13 }}>Threshold:</label>
+                <input className="form-input" type="number" min="1" value={packagingConfig.magnetPackageThreshold || 3} style={{ width: 60 }}
+                  onChange={async (e) => {
+                    try {
+                      await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ magnetPackageThreshold: parseInt(e.target.value) || 3 }) });
+                      loadPackaging();
+                    } catch (err) { setError(err.message); }
+                  }} />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>or more sets</span>
+              </div>
+            )}
+          </div>
+
+          {/* Framed Pano SKUs */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Framed Pano SKUs</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              SKUs for framed panoramics that trigger special packaging (e.g., 26x10x2 or 31x11x2).
+            </p>
+            {packagingConfig && (
+              <div>
+                <div className="form-row" style={{ gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                  <label style={{ fontSize: 13, minWidth: 160 }}>8x24 Framed Pano SKUs:</label>
+                  <input className="form-input" value={(packagingConfig.framedPanoSmallSKUs || []).join(', ')}
+                    placeholder="e.g. 34, 38" style={{ flex: 1 }}
+                    onBlur={async (e) => {
+                      const skus = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                      try {
+                        await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ framedPanoSmallSKUs: skus }) });
+                        loadPackaging();
+                      } catch (err) { setError(err.message); }
+                    }} />
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→ 26×10×2</span>
+                </div>
+                <div className="form-row" style={{ gap: 8, alignItems: 'center' }}>
+                  <label style={{ fontSize: 13, minWidth: 160 }}>10x30 Framed Pano SKUs:</label>
+                  <input className="form-input" value={(packagingConfig.framedPanoLargeSKUs || []).join(', ')}
+                    placeholder="e.g. 37, 39" style={{ flex: 1 }}
+                    onBlur={async (e) => {
+                      const skus = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                      try {
+                        await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ framedPanoLargeSKUs: skus }) });
+                        loadPackaging();
+                      } catch (err) { setError(err.message); }
+                    }} />
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→ 31×11×2</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Package Bundles */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Package Bundles</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              Multi-product packages with a combined weight. "Force Package" means the bundle contains rigid items.
+            </p>
+            {packagingConfig && (
+              <table className="data-table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr><th>SKU</th><th>Name</th><th>Weight (oz)</th><th>Force Package</th></tr>
+                </thead>
+                <tbody>
+                  {Object.entries(packagingConfig.packageBundles || {}).map(([sku, data]) => (
+                    <tr key={sku}>
+                      <td style={{ fontWeight: 600 }}>{sku}</td>
+                      <td>{data.name}</td>
+                      <td>
+                        <input className="form-input" type="number" step="0.5" value={data.weight}
+                          style={{ width: 70, fontSize: 12, padding: '2px 6px' }}
+                          onChange={async (e) => {
+                            const updated = { ...packagingConfig.packageBundles, [sku]: { ...data, weight: parseFloat(e.target.value) || 0 } };
+                            try {
+                              await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ packageBundles: updated }) });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }} />
+                      </td>
+                      <td>
+                        <input type="checkbox" checked={data.forcePackage || false}
+                          onChange={async (e) => {
+                            const updated = { ...packagingConfig.packageBundles, [sku]: { ...data, forcePackage: e.target.checked } };
+                            try {
+                              await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ packageBundles: updated }) });
+                              loadPackaging();
+                            } catch (err) { setError(err.message); }
+                          }} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
       {activeSection === 'setup' && isAdmin && (
         <div className="card">
           <div className="card-header">
