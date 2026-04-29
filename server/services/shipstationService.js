@@ -210,16 +210,14 @@ class ShipStationService {
       orderDate: pdxOrder.placedAt,
       orderStatus: 'awaiting_shipment',
       customerEmail: pdxOrder.studio?.email || '',
-      carrierCode: packaging.carrierCode,
-      serviceCode: packaging.serviceCode,
-      packageCode: packaging.packageCode,
       billTo,
       shipTo,
       items,
-      internalNotes: internalNotes + ` | Pkg: ${packaging.packageTypeName}`,
+      internalNotes: internalNotes + ` | Pkg: ${packaging.packageTypeName} | ${packaging.carrierCode}/${packaging.serviceCode}/${packaging.packageCode}`,
       weight: finalWeight,
       dimensions: finalDims,
       confirmation: 'none',
+      requestedShippingService: packaging.serviceCode || null,
     };
 
     console.log(`[ShipStation] Built order payload for ${pdxOrder.num}: ${items.length} items, ship to ${shipTo.name} (${shipTo.city}, ${shipTo.state})`);

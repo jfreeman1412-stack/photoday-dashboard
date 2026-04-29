@@ -51,11 +51,6 @@
       "productName": "Small Pano"
     },
     {
-      "externalId": "33",
-      "size": "10x36",
-      "productName": "Medium Pano"
-    },
-    {
       "externalId": "34",
       "size": "12x40",
       "productName": "Largo Pano"
@@ -74,6 +69,11 @@
       "externalId": "22",
       "size": "8x11",
       "productName": "Memory Mate Plaque"
+    },
+    {
+      "externalId": "33",
+      "size": "12x36",
+      "productName": "Medium Pano"
     }
   ]
 }

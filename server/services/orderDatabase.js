@@ -242,8 +242,69 @@ class OrderDatabase {
       // Include full order data for processing
       orderData,
       shipping: orderData.shipping || null,
+      customerName: this._getCustomerName(orderData),
       updatedAt: row.updated_at,
     };
+  }
+
+  /**
+   * Extract customer name from order data.
+   */
+  _getCustomerName(orderData) {
+    if (orderData.shipping?.destination?.recipient) {
+      return orderData.shipping.destination.recipient;
+    }
+    if (orderData.groups?.length > 0) {
+      const fields = orderData.groups[0].fields || [];
+      const first = fields.find(f => f.key === 'first_name')?.value || '';
+      const last = fields.find(f => f.key === 'last_name')?.value || '';
+      return `${first} ${last}`.trim();
+    }
+    return '';
+  }
+
+  // ─── SEARCH ───────────────────────────────────────────────
+
+  /**
+   * Search orders by order number or customer name across all statuses.
+   */
+  async searchOrders(query) {
+    if (!query || query.trim().length < 2) return [];
+
+    const searchTerm = `%${query.trim()}%`;
+
+    // Search by order number or by recipient name in the JSON order data
+    const rows = this.db.prepare(`
+      SELECT * FROM orders
+      WHERE order_num LIKE ?
+         OR order_data LIKE ?
+      ORDER BY placed_at DESC
+      LIMIT 50
+    `).all(searchTerm, `%"recipient":"${query.trim()}%`);
+
+    // Also try a broader search on the JSON for first/last name
+    const nameRows = this.db.prepare(`
+      SELECT * FROM orders
+      WHERE order_data LIKE ?
+      ORDER BY placed_at DESC
+      LIMIT 50
+    `).all(`%${query.trim()}%`);
+
+    // Merge and deduplicate
+    const seen = new Set(rows.map(r => r.order_num));
+    for (const r of nameRows) {
+      if (!seen.has(r.order_num)) {
+        // Filter: only include if the query matches the recipient name
+        const data = JSON.parse(r.order_data || '{}');
+        const recipient = (data.shipping?.destination?.recipient || '').toLowerCase();
+        if (recipient.includes(query.trim().toLowerCase())) {
+          rows.push(r);
+          seen.add(r.order_num);
+        }
+      }
+    }
+
+    return rows.map(r => this._rowToOrder(r));
   }
 
   /**

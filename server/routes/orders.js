@@ -225,7 +225,7 @@ router.put('/meta/gallery-settings', async (req, res) => {
 
     // Remove gallery entry if all settings are default/off
     const gs = allSettings[gallery];
-    if (!gs.teamEnabled && !gs.autoProcess && !gs.skipShipStation && (!gs.folderSort || gs.folderSort.length === 0)) {
+    if (!gs.teamEnabled && !gs.autoProcess && (!gs.folderSort || gs.folderSort.length === 0)) {
       delete allSettings[gallery];
     }
 
@@ -239,6 +239,18 @@ router.put('/meta/gallery-settings', async (req, res) => {
 
     console.log(`[GallerySettings] Updated settings for "${gallery}":`, JSON.stringify(settings));
     res.json({ success: true, gallerySettings: allSettings });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── SEARCH ORDERS ──────────────────────────────────────────
+router.get('/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) return res.json([]);
+    const results = await orderDatabase.searchOrders(q);
+    res.json(results);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -349,18 +361,6 @@ router.post('/reprocess/:orderNum', async (req, res) => {
   }
 });
 
-// Process an order for a specific team only
-router.post('/process-team/:orderNum', async (req, res) => {
-  try {
-    const { team } = req.body;
-    if (!team) return res.status(400).json({ error: 'Team name required' });
-    const result = await schedulerService.processOrderByTeam(req.params.orderNum, team, req.body);
-    res.json({ success: true, ...result });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Process all unprocessed orders
 router.post('/process-all', async (req, res) => {
   try {
@@ -411,24 +411,39 @@ router.post('/:orderNum/reprint-item', async (req, res) => {
     const item = (orderData.items || []).find(i => i.id === itemId);
     if (!item) return res.status(404).json({ error: 'Item not found in order' });
 
-    const orderDir = order.downloadPath || path.join(require('../config').paths.downloadBase, orderNum);
+    // Use today's date folder for reprints (not the original order's download path)
+    const fileService = require('../services/fileService');
+    const orderDir = await fileService.getOrderDir(orderData);
     await fs.ensureDir(orderDir);
 
     console.log(`[Reprint] Starting reprint for ${orderNum} item: ${item.description} (externalId: ${item.externalId})`);
 
     // 1. Download just this item's images (force redownload to get latest version)
+    // Check if this is a specialty item and route to the correct folder
+    const specialtyService = require('../services/specialtyService');
+    const isSpecialty = await specialtyService.isSpecialty(item.externalId);
+    let downloadDir = orderDir;
+
+    if (isSpecialty) {
+      const specialtyFolder = await specialtyService.getSpecialtyFolder(item.externalId);
+      if (specialtyFolder) {
+        downloadDir = specialtyFolder;
+        await fs.ensureDir(downloadDir);
+        console.log(`[Reprint] Specialty item → routing to: ${downloadDir}`);
+      }
+    }
 
     const downloadedFiles = [];
     for (const image of item.images || []) {
       if (!image.assetUrl) continue;
       const filename = image.filename || `${image.id}.jpg`;
-      const savePath = path.join(orderDir, filename);
+      const savePath = path.join(downloadDir, filename);
 
       try {
         const buffer = await photodayService.downloadAsset(image.assetUrl);
         await fs.writeFile(savePath, buffer);
         downloadedFiles.push({ filename, path: savePath });
-        console.log(`[Reprint] Downloaded: ${filename}`);
+        console.log(`[Reprint] Downloaded: ${filename}${isSpecialty ? ' (specialty)' : ''}`);
       } catch (dlErr) {
         console.error(`[Reprint] Download failed for ${filename}: ${dlErr.message}`);
         if (await fs.pathExists(savePath)) {
@@ -444,37 +459,33 @@ router.post('/:orderNum/reprint-item', async (req, res) => {
     try {
       const reprintResults = await impositionService.processOrder(
         { ...orderData, items: [item] },
-        orderDir
+        downloadDir
       );
       const imposedCount = reprintResults.filter(r => r.imposed).length;
       if (imposedCount > 0) {
-        console.log(`[Reprint] Imposition applied for ${item.description}`);
+        console.log(`[Reprint] Imposition applied for ${item.description} in ${downloadDir}`);
       }
     } catch (impErr) {
       console.error(`[Reprint] Imposition error: ${impErr.message}`);
     }
 
-    // 3. Generate a reprint-only txt file (no packing slip)
+    // 3. Generate a reprint-only txt file (always, even for specialty items)
     let txtResult = null;
     try {
       const customerName = photodayService.getCustomerName(orderData);
-      const specialtyService = require('../services/specialtyService');
-      const isSpecialty = await specialtyService.isSpecialty(item.externalId);
 
       const lineItems = [];
-      if (!isSpecialty) {
-        const size = await darkroomService._getSize(item);
-        const templatePath = await darkroomService.findTemplate(item);
+      const size = await darkroomService._getSize(item);
+      const templatePath = await darkroomService.findTemplate(item);
 
-        for (const image of item.images || []) {
-          const imagePath = path.join(orderDir, image.filename || `${image.id}.jpg`);
-          lineItems.push({
-            qty: item.quantity || 1,
-            size,
-            templatePath,
-            filePath: imagePath,
-          });
-        }
+      for (const image of item.images || []) {
+        const imagePath = path.join(downloadDir, image.filename || `${image.id}.jpg`);
+        lineItems.push({
+          qty: item.quantity || 1,
+          size,
+          templatePath,
+          filePath: imagePath,
+        });
       }
 
       if (lineItems.length > 0) {

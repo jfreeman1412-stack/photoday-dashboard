@@ -276,14 +276,27 @@
       "itemWidth": 30,
       "itemHeight": 10,
       "sheetWidth": 36,
-      "sheetHeight": 13,
+      "sheetHeight": 12,
       "dpi": 300,
-      "colGap": 0.01,
-      "rowGap": 1,
-      "textOverlays": [],
+      "colGap": 0,
+      "rowGap": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order:{order_id} \\n {item_description}",
+          "x": 33.3,
+          "y": 12,
+          "fontSize": 10,
+          "color": "#000000",
+          "autoSize": true,
+          "centerAlign": true,
+          "width": 1,
+          "height": 10,
+          "rotation": -90
+        }
+      ],
       "centerOnSheet": false,
       "marginLeft": 3,
-      "marginTop": 1.5
+      "marginTop": 1
     },
     {
       "id": "b6b5351d-5848-4eb7-bc1f-66d468740aa1",

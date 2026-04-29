@@ -1690,7 +1690,8 @@ export default function SettingsPage({ user }) {
               <div>
                 <div className="form-row" style={{ gap: 8, marginBottom: 8, alignItems: 'center' }}>
                   <label style={{ fontSize: 13, minWidth: 160 }}>8x24 Framed Pano SKUs:</label>
-                  <input className="form-input" value={(packagingConfig.framedPanoSmallSKUs || []).join(', ')}
+                  <input className="form-input" defaultValue={(packagingConfig.framedPanoSmallSKUs || []).join(', ')}
+                    key={'fps-' + (packagingConfig.framedPanoSmallSKUs || []).join(',')}
                     placeholder="e.g. 34, 38" style={{ flex: 1 }}
                     onBlur={async (e) => {
                       const skus = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -1703,7 +1704,8 @@ export default function SettingsPage({ user }) {
                 </div>
                 <div className="form-row" style={{ gap: 8, alignItems: 'center' }}>
                   <label style={{ fontSize: 13, minWidth: 160 }}>10x30 Framed Pano SKUs:</label>
-                  <input className="form-input" value={(packagingConfig.framedPanoLargeSKUs || []).join(', ')}
+                  <input className="form-input" defaultValue={(packagingConfig.framedPanoLargeSKUs || []).join(', ')}
+                    key={'fpl-' + (packagingConfig.framedPanoLargeSKUs || []).join(',')}
                     placeholder="e.g. 37, 39" style={{ flex: 1 }}
                     onBlur={async (e) => {
                       const skus = e.target.value.split(',').map(s => s.trim()).filter(Boolean);

@@ -1,82 +1,82 @@
 {
   "productWeights": {
     "6": {
-      "weight": 1.5,
+      "weight": 0.4,
       "name": "Memory Mate",
       "category": "flat"
     },
     "7": {
-      "weight": 1,
+      "weight": 0.2,
       "name": "Key Chain",
       "category": "rigid"
     },
     "8": {
-      "weight": 1.5,
+      "weight": 0.4,
       "name": "8x10 Individual",
       "category": "flat"
     },
     "9": {
-      "weight": 1.5,
+      "weight": 0.4,
       "name": "8x10 Team Photo",
       "category": "flat"
     },
     "10": {
-      "weight": 0.5,
+      "weight": 0.1,
       "name": "5x7 Individual Print",
       "category": "flat"
     },
     "11": {
-      "weight": 0.5,
+      "weight": 0.1,
       "name": "5x7 Team Photo",
       "category": "flat"
     },
     "12": {
-      "weight": 0.5,
+      "weight": 0.4,
       "name": "8 Wallets",
       "category": "flat"
     },
     "13": {
-      "weight": 0.5,
+      "weight": 4,
       "name": "Collector Cards",
       "category": "rigid"
     },
     "15": {
-      "weight": 0.5,
+      "weight": 1.7,
       "name": "2 Large Magnets",
       "category": "flat"
     },
     "16": {
-      "weight": 1,
+      "weight": 0.6,
       "name": "Photo Button",
       "category": "rigid"
     },
     "17": {
-      "weight": 2,
+      "weight": 1.7,
       "name": "4 Mini Magnets",
       "category": "flat"
     },
     "18": {
-      "weight": 0.5,
+      "weight": 1,
       "name": "Bagtag",
-      "category": "flat"
+      "category": "rigid"
     },
     "19": {
-      "weight": 4,
+      "weight": 5,
       "name": "Mouse Pad",
       "category": "rigid"
     },
     "20": {
-      "weight": 12,
+      "weight": 11.5,
       "name": "Coffee Mug",
       "category": "bulky"
     },
     "21": {
-      "weight": 6,
+      "weight": 13.4,
       "name": "5x7 Plaque",
       "category": "rigid"
     },
     "22": {
-      "weight": 8,
+      "weight": 32,
       "name": "8x10 Plaque",
       "category": "rigid"
     },
@@ -86,32 +86,37 @@
       "category": "digital"
     },
     "27": {
-      "weight": 0.5,
+      "weight": 0.4,
       "name": "4-3.5x5 Prints",
       "category": "flat"
     },
     "32": {
-      "weight": 3,
+      "weight": 2,
       "name": "8x24 Pano",
       "category": "pano"
     },
     "33": {
-      "weight": 4,
+      "weight": 2.8,
       "name": "10x30 Pano",
       "category": "pano"
     },
+    "34": {
+      "weight": 2.8,
+      "name": "12x36 Pano",
+      "category": "pano"
+    },
     "35": {
-      "weight": 1,
+      "weight": 3,
       "name": "Trading Cards",
       "category": "rigid"
     },
     "36": {
-      "weight": 1,
+      "weight": 32,
       "name": "Item 36",
-      "category": "flat"
+      "category": "rigid"
     },
     "45": {
-      "weight": 1,
+      "weight": 0.2,
       "name": "Item 45",
       "category": "flat"
     }
@@ -119,17 +124,17 @@
   "packageBundles": {
     "1": {
       "name": "Gold Package",
-      "weight": 8,
+      "weight": 0,
       "forcePackage": true
     },
     "2": {
       "name": "Silver Package",
-      "weight": 6,
+      "weight": 0,
       "forcePackage": false
     },
     "3": {
       "name": "Bronze Package",
-      "weight": 2,
+      "weight": 0,
       "forcePackage": false
     }
   },
@@ -139,7 +144,7 @@
       "length": 6,
       "width": 8,
       "height": 0.5,
-      "baseWeight": 1,
+      "baseWeight": 1.5,
       "service": "large_envelope_or_flat"
     },
     "flat_9x11": {
@@ -147,7 +152,7 @@
       "length": 9,
       "width": 11,
       "height": 0.5,
-      "baseWeight": 2,
+      "baseWeight": 3,
       "service": "large_envelope_or_flat"
     },
     "pano_tube": {
@@ -155,7 +160,7 @@
       "length": 12,
       "width": 2,
       "height": 2,
-      "baseWeight": 3,
+      "baseWeight": 2.6,
       "service": "package"
     },
     "small_box": {
@@ -163,7 +168,7 @@
       "length": 6,
       "width": 6,
       "height": 6,
-      "baseWeight": 4,
+      "baseWeight": 3.5,
       "service": "package"
     },
     "medium_box": {
@@ -171,7 +176,7 @@
       "length": 12,
       "width": 10,
       "height": 2,
-      "baseWeight": 4,
+      "baseWeight": 5.5,
       "service": "package"
     },
     "pano_frame_sm": {
@@ -179,7 +184,7 @@
       "length": 26,
       "width": 10,
       "height": 2,
-      "baseWeight": 8,
+      "baseWeight": 30,
       "service": "package"
     },
     "pano_frame_lg": {
@@ -187,7 +192,7 @@
       "length": 31,
       "width": 11,
       "height": 2,
-      "baseWeight": 10,
+      "baseWeight": 44,
       "service": "package"
     },
     "large_box": {
@@ -195,7 +200,7 @@
       "length": 14,
       "width": 10,
       "height": 6,
-      "baseWeight": 6,
+      "baseWeight": 9,
       "service": "package"
     }
   },

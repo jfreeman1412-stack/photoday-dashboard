@@ -24,6 +24,9 @@ export default function OrdersPage() {
 
   // Gallery filter
   const [galleryFilter, setGalleryFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // Team filter
   const [teamFilter, setTeamFilter] = useState('all');
@@ -354,10 +357,11 @@ export default function OrdersPage() {
             <tr>
               <th>Order #</th>
               <th>Gallery</th>
-              <th>Studio</th>
+              <th>Name</th>
               <th>Items</th>
               <th>Type</th>
               <th>Placed</th>
+              {status === 'search' && <th>Status</th>}
               {status === 'processed' && <><th>SS Order</th><th>Processed</th></>}
               {status === 'shipped' && <><th>Carrier</th><th>Tracking</th><th>Shipped</th></>}
               <th>Actions</th>
@@ -385,7 +389,7 @@ export default function OrdersPage() {
                     {order.gallery || '—'}
                   </span>
                 </td>
-                <td>{order.studioName || '—'}</td>
+                <td>{order.customerName || '—'}</td>
                 <td>
                   <div style={{ fontSize: 12 }}>
                     {(order.items || []).map((item, i) => (
@@ -426,6 +430,21 @@ export default function OrdersPage() {
                   </span>
                 </td>
                 <td style={{ fontSize: 12 }}>{formatDate(order.placedAt)}</td>
+
+                {status === 'search' && (
+                  <td>
+                    <span className={`badge ${
+                      order.status === 'shipped' ? 'badge-success' :
+                      order.status === 'processed' ? 'badge-warning' :
+                      order.status === 'partially_processed' ? 'badge-info' :
+                      'badge-secondary'
+                    }`}>
+                      {order.status === 'processed' ? 'Awaiting Shipment' :
+                       order.status === 'partially_processed' ? 'Partial' :
+                       order.status === 'shipped' ? 'Shipped' : 'Unprocessed'}
+                    </span>
+                  </td>
+                )}
 
                 {status === 'processed' && (
                   <>
@@ -629,7 +648,75 @@ export default function OrdersPage() {
       </div>
 
       {/* ─── Gallery Filter ──────────────────────────────── */}
-      {galleries.length > 0 && (activeTab === 'unprocessed' || activeTab === 'processed' || activeTab === 'shipped') && (
+      {/* Search Bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px',
+        background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)',
+        borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
+      }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Search:</span>
+        <input
+          className="form-input"
+          placeholder="Order number or customer name..."
+          value={searchQuery}
+          onChange={e => {
+            setSearchQuery(e.target.value);
+            if (e.target.value.trim().length < 2) {
+              setSearchResults(null);
+            }
+          }}
+          onKeyDown={async (e) => {
+            if (e.key === 'Enter' && searchQuery.trim().length >= 2) {
+              setSearchLoading(true);
+              try {
+                const results = await api._fetch(`/orders/search?q=${encodeURIComponent(searchQuery.trim())}`);
+                setSearchResults(results);
+              } catch (err) { setError(err.message); }
+              finally { setSearchLoading(false); }
+            }
+          }}
+          style={{ flex: 1, maxWidth: 350, fontSize: 12, padding: '5px 10px' }}
+        />
+        <button className="btn btn-sm btn-primary" disabled={searchQuery.trim().length < 2 || searchLoading}
+          onClick={async () => {
+            setSearchLoading(true);
+            try {
+              const results = await api._fetch(`/orders/search?q=${encodeURIComponent(searchQuery.trim())}`);
+              setSearchResults(results);
+            } catch (err) { setError(err.message); }
+            finally { setSearchLoading(false); }
+          }}
+          style={{ padding: '4px 12px', fontSize: 11 }}
+        >
+          {searchLoading ? 'Searching...' : 'Search'}
+        </button>
+        {searchResults !== null && (
+          <button className="btn btn-sm btn-secondary"
+            onClick={() => { setSearchQuery(''); setSearchResults(null); }}
+            style={{ padding: '4px 10px', fontSize: 11 }}
+          >Clear</button>
+        )}
+        {searchResults !== null && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+
+      {/* Search Results */}
+      {searchResults !== null && (
+        <div style={{ padding: 16, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)' }}>
+          {searchResults.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: 20 }}>
+              No orders found matching "{searchQuery}"
+            </div>
+          ) : (
+            renderOrderTable(searchResults, 'search')
+          )}
+        </div>
+      )}
+
+      {searchResults === null && galleries.length > 0 && (activeTab === 'unprocessed' || activeTab === 'processed' || activeTab === 'shipped') && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px',
           background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)',
@@ -842,7 +929,7 @@ export default function OrdersPage() {
       )}
 
       {/* ─── Tab Content ─────────────────────────────────── */}
-      {activeTab === 'unprocessed' && (
+      {searchResults === null && activeTab === 'unprocessed' && (
         <div className="card" style={{ borderRadius: galleries.length > 0 ? '0 0 var(--radius-md) var(--radius-md)' : undefined }}>
           <div className="card-header">
             <h3 className="card-title">
@@ -880,7 +967,7 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {activeTab === 'processed' && (
+      {searchResults === null && activeTab === 'processed' && (
         <div className="card" style={{ borderRadius: galleries.length > 0 ? '0 0 var(--radius-md) var(--radius-md)' : undefined }}>
           <div className="card-header">
             <h3 className="card-title">
@@ -927,7 +1014,7 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {activeTab === 'shipped' && (
+      {searchResults === null && activeTab === 'shipped' && (
         <div className="card" style={{ borderRadius: galleries.length > 0 ? '0 0 var(--radius-md) var(--radius-md)' : undefined }}>
           <div className="card-header">
             <h3 className="card-title">
