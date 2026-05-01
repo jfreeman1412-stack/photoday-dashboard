@@ -365,21 +365,64 @@ class SchedulerService {
     }
 
     // 5. Create order in ShipStation (awaiting_shipment — label not purchased)
+    //    Behavior:
+    //      - First-time process (options.reprocess !== true): always create.
+    //      - Reprocess: check if order already exists in ShipStation by orderNumber.
+    //        If found → skip create (operator must edit in SS UI or delete+reprocess).
+    //        If not found → create as if it were a first-time process.
     let shipstationResult = null;
+    let shipstationStepOk = false;
     try {
-      const ssPayload = await shipstationService.buildOrderFromPDX(order, options.shipstation || {});
-      shipstationResult = await shipstationService.createOrder(ssPayload);
-      console.log(`[Scheduler] ShipStation order created for ${orderNum}: SS#${shipstationResult.orderId}`);
+      let existingOrder = null;
+      if (options.reprocess) {
+        try {
+          const lookup = await shipstationService.listOrders({ orderNumber: orderNum });
+          const found = (lookup?.orders || []).find(o => o.orderNumber === orderNum);
+          if (found) existingOrder = found;
+        } catch (lookupErr) {
+          // Lookup failure — don't blindly create, surface error and stop the SS step.
+          console.error(`[Scheduler] ShipStation lookup failed for ${orderNum}: ${lookupErr.message}`);
+          shipstationResult = { error: `Lookup failed: ${lookupErr.message}` };
+          throw lookupErr; // jump to outer catch — preserves shipstationStepOk = false
+        }
+      }
+
+      if (existingOrder) {
+        console.log(`[Scheduler] ShipStation order already exists for ${orderNum} (SS#${existingOrder.orderId}, status: ${existingOrder.orderStatus}) — skipping create`);
+        shipstationResult = {
+          orderId: existingOrder.orderId,
+          orderStatus: existingOrder.orderStatus,
+          skipped: true,
+          reason: 'Order already exists in ShipStation',
+        };
+        shipstationStepOk = true;
+      } else {
+        const ssPayload = await shipstationService.buildOrderFromPDX(order, options.shipstation || {});
+        shipstationResult = await shipstationService.createOrder(ssPayload);
+        const sentPkg = ssPayload.packageCode;
+        const storedPkg = shipstationResult.packageCode;
+        const drift = sentPkg !== storedPkg ? ` ⚠ drift: sent=${sentPkg}, stored=${storedPkg}` : '';
+        console.log(`[Scheduler] ShipStation order created for ${orderNum}: SS#${shipstationResult.orderId} (packageCode=${storedPkg})${drift}`);
+        shipstationStepOk = true;
+      }
     } catch (ssError) {
       console.error(`[Scheduler] ShipStation creation failed for ${orderNum}:`, ssError.message);
-      shipstationResult = { error: ssError.message };
+      // Preserve the lookup-failure error if we set one before throwing
+      if (!shipstationResult) shipstationResult = { error: ssError.message };
+      shipstationStepOk = false;
     }
 
-    // 6. Mark as processed in PhotoDay
-    try {
-      await photodayService.markAsProcessed(orderNum);
-    } catch (pdErr) {
-      console.warn(`[Scheduler] PhotoDay mark processed for ${orderNum}: ${pdErr.message}`);
+    // 6. Mark as processed in PhotoDay — ONLY if the ShipStation step succeeded
+    //    (succeeded includes "skipped because already exists"). On failure, leave it
+    //    unmarked so the operator notices and can retry without going out of sync.
+    if (shipstationStepOk) {
+      try {
+        await photodayService.markAsProcessed(orderNum);
+      } catch (pdErr) {
+        console.warn(`[Scheduler] PhotoDay mark processed for ${orderNum}: ${pdErr.message}`);
+      }
+    } else {
+      console.warn(`[Scheduler] ShipStation step failed for ${orderNum} — NOT marking as processed in PhotoDay. Fix the issue and reprocess.`);
     }
 
     // 7. Update local database

@@ -175,6 +175,84 @@ class DarkroomService {
     return filename + (fnConfig.extension || '.txt');
   }
 
+  /**
+   * Wait until every referenced file path is fully written and stable.
+   *
+   * "Stable" means the file exists and its size doesn't change between two
+   * stat() calls separated by `pollIntervalMs`. This catches the race where
+   * Darkroom would otherwise open an image that's still being flushed to a
+   * network share.
+   *
+   * @param {string[]} filePaths
+   * @param {object} opts - { timeoutMs, pollIntervalMs, warnAfterMs }
+   * @returns {{ stable: boolean, elapsedMs: number, missing: string[], unstable: string[] }}
+   */
+  async _waitForFilesStable(filePaths, opts = {}) {
+    const timeoutMs = opts.timeoutMs ?? 30000;
+    const pollIntervalMs = opts.pollIntervalMs ?? 250;
+    const warnAfterMs = opts.warnAfterMs ?? 5000;
+    const start = Date.now();
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const dedup = Array.from(new Set(filePaths.filter(Boolean)));
+
+    let missing = [];
+    let unstable = [];
+    let warned = false;
+
+    while (Date.now() - start < timeoutMs) {
+      missing = [];
+      unstable = [];
+
+      // First pass: stat every file
+      const sizes = {};
+      for (const p of dedup) {
+        try {
+          const s = await fs.stat(p);
+          sizes[p] = s.size;
+        } catch (err) {
+          missing.push(p);
+        }
+      }
+
+      if (missing.length === 0) {
+        // Second pass after a short delay — if sizes are unchanged, files are stable
+        await sleep(pollIntervalMs);
+        let allStable = true;
+        for (const p of dedup) {
+          try {
+            const s = await fs.stat(p);
+            if (s.size !== sizes[p]) {
+              unstable.push(p);
+              allStable = false;
+            }
+          } catch (err) {
+            missing.push(p);
+            allStable = false;
+          }
+        }
+        if (allStable) {
+          const elapsedMs = Date.now() - start;
+          return { stable: true, elapsedMs, missing: [], unstable: [] };
+        }
+      }
+
+      const elapsed = Date.now() - start;
+      if (!warned && elapsed > warnAfterMs) {
+        console.warn(`[Darkroom] Files not yet stable after ${elapsed}ms (${missing.length} missing, ${unstable.length} still writing). Waiting...`);
+        warned = true;
+      }
+      await sleep(pollIntervalMs);
+    }
+
+    return {
+      stable: false,
+      elapsedMs: Date.now() - start,
+      missing,
+      unstable,
+    };
+  }
+
   // ─── TXT FILE GENERATION ─────────────────────────────────
 
   /**
@@ -213,6 +291,12 @@ class DarkroomService {
 
   /**
    * Write a txt file to disk.
+   *
+   * The write is staged: we first wait for every referenced image file to be
+   * fully written and size-stable (so Darkroom doesn't try to print a partial
+   * image), then write the txt to a `.tmp` filename and atomically rename it
+   * to the final `.txt` name. Darkroom never sees a partial txt or a txt
+   * that references unflushed images.
    */
   async writeTxtFile(orderData, outputDir, filenameSuffix = '') {
     const dir = outputDir || config.paths.txtOutput;
@@ -227,9 +311,45 @@ class DarkroomService {
     }
 
     const filePath = path.join(dir, filename);
+    const tmpPath = filePath + '.tmp';
     const content = this.generateTxtContent(orderData);
 
-    await fs.writeFile(filePath, content, 'utf-8');
+    // Wait for every Filepath referenced in the txt to be stable on disk.
+    // This is the fix for the "txt picked up by Darkroom before images finished
+    // flushing to the network share" race condition.
+    const referencedPaths = (orderData.lineItems || [])
+      .map(li => li.filePath)
+      .filter(Boolean);
+
+    if (referencedPaths.length > 0) {
+      const result = await this._waitForFilesStable(referencedPaths, {
+        timeoutMs: 30000,
+        pollIntervalMs: 250,
+        warnAfterMs: 5000,
+      });
+      if (!result.stable) {
+        const detail = [
+          result.missing.length ? `missing: ${result.missing.length}` : null,
+          result.unstable.length ? `still-writing: ${result.unstable.length}` : null,
+        ].filter(Boolean).join(', ');
+        const err = new Error(
+          `Files for ${orderData.orderNum} not stable after ${result.elapsedMs}ms (${detail}). ` +
+          `Refusing to write txt — Darkroom would print incomplete output.`
+        );
+        err.missing = result.missing;
+        err.unstable = result.unstable;
+        throw err;
+      }
+      if (result.elapsedMs > 1000) {
+        console.log(`[Darkroom] Files stabilized in ${result.elapsedMs}ms`);
+      }
+    }
+
+    // Atomic write: stage to .tmp, then rename. Rename is atomic for files
+    // in the same directory on Windows + SMB, so Darkroom either sees the
+    // complete txt or no txt at all — never a partial one.
+    await fs.writeFile(tmpPath, content, 'utf-8');
+    await fs.rename(tmpPath, filePath);
 
     return { filePath, filename, content };
   }

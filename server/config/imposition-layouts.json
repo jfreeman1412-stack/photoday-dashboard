@@ -383,6 +383,100 @@
           "height": 1
         }
       ]
+    },
+    {
+      "id": "9c92f5eb-425a-4df3-a986-49877de59c57",
+      "name": "5x7 Horizontal",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 7,
+      "itemHeight": 5,
+      "sheetWidth": 8,
+      "sheetHeight": 5,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order: {order_id} \\n {gallery} - {team}",
+          "x": 7.1,
+          "y": 5,
+          "fontSize": 10,
+          "color": "#000000",
+          "rotation": -90,
+          "autoSize": true,
+          "centerAlign": true,
+          "width": 1,
+          "height": 5
+        }
+      ]
+    },
+    {
+      "id": "da881d9d-763c-4035-bd7f-872748c67d6c",
+      "name": "8x10 Horizontal",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 10,
+      "itemHeight": 8,
+      "sheetWidth": 10,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "colGap": 0.01,
+      "rowGap": 0.01,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": []
+    },
+    {
+      "id": "5cd15528-b2ef-4243-90ff-9927d8618718",
+      "name": "8x10 IND Vertical",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 8,
+      "itemHeight": 10,
+      "sheetWidth": 8,
+      "sheetHeight": 10,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": []
+    },
+    {
+      "id": "9c613924-dc39-47bf-b53e-86981df6db6d",
+      "name": "8x10 Group Plaque",
+      "cols": 1,
+      "rows": 1,
+      "itemWidth": 10,
+      "itemHeight": 8,
+      "sheetWidth": 11,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order: {order_id} \\n  {gallery}-{photo_tag}-{item_description}",
+          "x": 10,
+          "y": 8,
+          "fontSize": 10,
+          "color": "#000000",
+          "autoSize": true,
+          "centerAlign": true,
+          "width": 1,
+          "height": 8,
+          "rotation": -90
+        }
+      ]
     }
   ],
   "mappings": [
@@ -435,16 +529,36 @@
       "layoutId": "ba989e0f-c7cb-48bc-97ee-8374c38649e0"
     },
     {
-      "externalId": "10",
-      "layoutId": "d401e7e4-f12b-40f2-9b6c-a376927581d3"
-    },
-    {
       "externalId": "16",
       "layoutId": "5692caa8-e3d3-48e8-a03f-50e6fd0cb829"
     },
     {
       "externalId": "19",
       "layoutId": "120f7ea3-f22a-48b7-aee3-1fa9eb7972f0"
+    },
+    {
+      "externalId": "10",
+      "layoutId": "d401e7e4-f12b-40f2-9b6c-a376927581d3",
+      "orientation": "vertical"
+    },
+    {
+      "externalId": "10",
+      "layoutId": "9c92f5eb-425a-4df3-a986-49877de59c57",
+      "orientation": "horizontal"
+    },
+    {
+      "externalId": "8",
+      "layoutId": "da881d9d-763c-4035-bd7f-872748c67d6c",
+      "orientation": "horizontal"
+    },
+    {
+      "externalId": "8",
+      "layoutId": "5cd15528-b2ef-4243-90ff-9927d8618718",
+      "orientation": "vertical"
+    },
+    {
+      "externalId": "810TEAM",
+      "layoutId": "9c613924-dc39-47bf-b53e-86981df6db6d"
     }
   ]
 }

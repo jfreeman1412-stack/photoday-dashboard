@@ -40,6 +40,33 @@ router.get('/session', async (req, res) => {
   }
 });
 
+// ─── UPDATE OWN PROFILE ───────────────────────────────────────
+// Lets any authenticated user update their own profile fields.
+// Currently allows: downloadPath, displayName, password.
+// Role / active flag changes still require admin via /users/:id.
+router.put('/profile', async (req, res) => {
+  try {
+    const sessionId = req.headers['x-session-id'];
+    const me = await authService.validateSession(sessionId);
+    if (!me) return res.status(401).json({ error: 'Invalid or expired session' });
+
+    const { downloadPath, displayName, password } = req.body;
+    const allowedUpdates = {};
+    if (downloadPath !== undefined) allowedUpdates.downloadPath = downloadPath;
+    if (displayName !== undefined) allowedUpdates.displayName = displayName;
+    if (password) allowedUpdates.password = password;
+
+    if (Object.keys(allowedUpdates).length === 0) {
+      return res.status(400).json({ error: 'No updatable fields provided' });
+    }
+
+    const updated = await authService.updateUser(me.id, allowedUpdates);
+    res.json({ success: true, user: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // ─── USER MANAGEMENT (admin only) ─────────────────────────────
 router.get('/users', async (req, res) => {
   try {

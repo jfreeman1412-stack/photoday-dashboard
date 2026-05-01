@@ -1,7 +1,7 @@
 {
   "productWeights": {
     "6": {
-      "weight": 0.4,
+      "weight": 0.5,
       "name": "Memory Mate",
       "category": "flat"
     },
@@ -11,12 +11,12 @@
       "category": "rigid"
     },
     "8": {
-      "weight": 0.4,
+      "weight": 0.5,
       "name": "8x10 Individual",
       "category": "flat"
     },
     "9": {
-      "weight": 0.4,
+      "weight": 0.5,
       "name": "8x10 Team Photo",
       "category": "flat"
     },
@@ -31,7 +31,7 @@
       "category": "flat"
     },
     "12": {
-      "weight": 0.4,
+      "weight": 0.5,
       "name": "8 Wallets",
       "category": "flat"
     },
@@ -39,6 +39,11 @@
       "weight": 4,
       "name": "Collector Cards",
       "category": "rigid"
+    },
+    "14": {
+      "weight": 0,
+      "name": "Statuette",
+      "category": "flat"
     },
     "15": {
       "weight": 1.7,
@@ -48,7 +53,7 @@
     "16": {
       "weight": 0.6,
       "name": "Photo Button",
-      "category": "rigid"
+      "category": "bulky"
     },
     "17": {
       "weight": 1.7,
@@ -85,8 +90,13 @@
       "name": "Digital Download",
       "category": "digital"
     },
+    "26": {
+      "weight": 0,
+      "name": "Acrylic Ornament",
+      "category": "flat"
+    },
     "27": {
-      "weight": 0.4,
+      "weight": 0.5,
       "name": "4-3.5x5 Prints",
       "category": "flat"
     },
@@ -216,8 +226,17 @@
     "20",
     "35"
   ],
-  "magnetPackageThreshold": 3,
-  "magnetSKU": "15",
-  "framedPanoSmallSKUs": [],
-  "framedPanoLargeSKUs": []
+  "framedPanoSmallSKUs": [
+    "26x10x2"
+  ],
+  "framedPanoLargeSKUs": [
+    "31x11x2"
+  ],
+  "magnetThreshold": {
+    "skus": [
+      "15",
+      "17"
+    ],
+    "threshold": 3
+  }
 }

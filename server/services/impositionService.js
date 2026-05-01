@@ -142,40 +142,151 @@ class ImpositionService {
     const data = await this._read();
     const layouts = data.layouts || [];
     return (data.mappings || []).map(m => ({
-      ...m,
+      externalId: m.externalId,
+      layoutId: m.layoutId,
+      orientation: m.orientation || null,
       layoutName: layouts.find(l => l.id === m.layoutId)?.name || 'Unknown',
     }));
   }
 
-  async addMapping(externalId, layoutId) {
+  async addMapping(externalId, layoutId, orientation = null) {
     const data = await this._read();
     if (!data.layouts.find(l => l.id === layoutId)) throw new Error('Layout not found');
-    if (data.mappings.find(m => m.externalId === String(externalId))) {
-      throw new Error(`ExternalId "${externalId}" is already mapped. Delete it first.`);
+
+    const sku = String(externalId);
+    const o = orientation ? String(orientation).toLowerCase() : null;
+    if (o && !['vertical', 'horizontal'].includes(o)) {
+      throw new Error(`Invalid orientation "${orientation}". Must be "vertical", "horizontal", or omitted (any).`);
     }
-    data.mappings.push({ externalId: String(externalId), layoutId });
+
+    // A SKU can have at most one mapping per orientation (including one orientation-agnostic).
+    const dup = data.mappings.find(m => m.externalId === sku && (m.orientation || null) === o);
+    if (dup) {
+      const which = o ? `for orientation "${o}"` : '(orientation: any)';
+      throw new Error(`ExternalId "${sku}" is already mapped ${which}. Delete it first.`);
+    }
+
+    const newMapping = { externalId: sku, layoutId };
+    if (o) newMapping.orientation = o;
+    data.mappings.push(newMapping);
     await this._write(data);
     return this.getMappings();
   }
 
-  async deleteMapping(externalId) {
+  async deleteMapping(externalId, orientation = null) {
     const data = await this._read();
-    data.mappings = data.mappings.filter(m => m.externalId !== String(externalId));
+    const sku = String(externalId);
+    const o = orientation ? String(orientation).toLowerCase() : null;
+    // If orientation is specified, only remove that exact pairing.
+    // If null/undefined, remove ALL mappings for this externalId (legacy behavior).
+    if (o) {
+      data.mappings = data.mappings.filter(m =>
+        !(m.externalId === sku && (m.orientation || null) === o)
+      );
+    } else {
+      data.mappings = data.mappings.filter(m => m.externalId !== sku);
+    }
+    await this._write(data);
+    return this.getMappings();
+  }
+
+  /**
+   * Update an existing mapping's layoutId and/or orientation.
+   * The mapping is located by (externalId, oldOrientation). If newOrientation differs,
+   * we verify there's no conflict with another mapping at (externalId, newOrientation).
+   *
+   * @param {string} externalId
+   * @param {string|null} oldOrientation - the current orientation of the mapping ('vertical'|'horizontal'|null)
+   * @param {object} updates - { layoutId?, orientation? } where orientation may be ''/null for "any"
+   */
+  async updateMapping(externalId, oldOrientation, updates = {}) {
+    const data = await this._read();
+    const sku = String(externalId);
+    const oldO = oldOrientation ? String(oldOrientation).toLowerCase() : null;
+
+    const idx = data.mappings.findIndex(m =>
+      m.externalId === sku && (m.orientation || null) === oldO
+    );
+    if (idx === -1) {
+      throw new Error(`No mapping found for externalId "${sku}" with orientation "${oldO || 'any'}"`);
+    }
+
+    const existing = data.mappings[idx];
+    const newLayoutId = updates.layoutId !== undefined ? updates.layoutId : existing.layoutId;
+    const newO = updates.orientation !== undefined
+      ? (updates.orientation ? String(updates.orientation).toLowerCase() : null)
+      : (existing.orientation || null);
+
+    if (newLayoutId && !data.layouts.find(l => l.id === newLayoutId)) {
+      throw new Error('Layout not found');
+    }
+    if (newO && !['vertical', 'horizontal'].includes(newO)) {
+      throw new Error(`Invalid orientation "${newO}". Must be "vertical", "horizontal", or empty (any).`);
+    }
+
+    // If orientation is changing, make sure no other mapping for this SKU already
+    // has the new orientation (would create a duplicate).
+    if (newO !== oldO) {
+      const conflict = data.mappings.find((m, i) =>
+        i !== idx && m.externalId === sku && (m.orientation || null) === newO
+      );
+      if (conflict) {
+        const which = newO ? `for orientation "${newO}"` : '(orientation: any)';
+        throw new Error(`A mapping already exists for "${sku}" ${which}. Remove it first.`);
+      }
+    }
+
+    const updated = { externalId: sku, layoutId: newLayoutId };
+    if (newO) updated.orientation = newO;
+    data.mappings[idx] = updated;
     await this._write(data);
     return this.getMappings();
   }
 
   // ─── IMPOSITION ENGINE ────────────────────────────────────
 
-  async findRule(externalId) {
+  /**
+   * Find the layout to use for a given product, optionally constrained by orientation.
+   *
+   * Lookup priority (per the user's chosen behavior — fall back rather than skip):
+   *   1. Exact match: same externalId AND same orientation
+   *   2. Orientation-agnostic: same externalId AND no orientation field on mapping
+   *   3. ANY mapping for the same externalId (so a portrait-only mapping still
+   *      handles a landscape order — risk of rotated/cropped output, but
+   *      surfaces the gap so it can be fixed)
+   *
+   * Returns: { layout, mapping } where mapping has the externalId, layoutId, orientation
+   * — or just the layout for backward compatibility (older callers used `result.id`).
+   */
+  async findRule(externalId, orientation = null) {
     const data = await this._read();
-    const mapping = data.mappings.find(m => m.externalId === String(externalId));
+    const matches = (data.mappings || []).filter(m => m.externalId === String(externalId));
+    if (matches.length === 0) return null;
+
+    let mapping = null;
+    if (orientation) {
+      const o = String(orientation).toLowerCase();
+      // 1. Exact orientation match
+      mapping = matches.find(m => m.orientation && m.orientation.toLowerCase() === o);
+      // 2. Orientation-agnostic mapping (no orientation field)
+      if (!mapping) mapping = matches.find(m => !m.orientation);
+      // 3. Fallback to any mapping for this externalId
+      if (!mapping) mapping = matches[0];
+    } else {
+      // No orientation specified — prefer agnostic mapping, else first
+      mapping = matches.find(m => !m.orientation) || matches[0];
+    }
+
     if (!mapping) return null;
-    return data.layouts.find(l => l.id === mapping.layoutId) || null;
+    const layout = data.layouts.find(l => l.id === mapping.layoutId);
+    if (!layout) return null;
+
+    // Decorate with mapping context for callers that want to log the fallback
+    return Object.assign({}, layout, { __mapping: mapping });
   }
 
-  async hasRule(externalId) {
-    return !!(await this.findRule(externalId));
+  async hasRule(externalId, orientation = null) {
+    return !!(await this.findRule(externalId, orientation));
   }
 
   /**
@@ -222,9 +333,25 @@ class ImpositionService {
    * If the grid content is smaller than the sheet, the remaining space
    * is left white (or used for text overlays).
    */
-  async composeSheet(imagePath, externalId, context = {}) {
-    const rule = await this.findRule(externalId);
+  async composeSheet(imagePath, externalId, context = {}, orientation = null) {
+    const rule = await this.findRule(externalId, orientation);
     if (!rule) return { imposed: false, reason: 'No imposition rule' };
+
+    // Detect when we fell back to a non-matching orientation — surface as a warning
+    // so the operator knows to add the missing layout.
+    let orientationWarning = null;
+    if (orientation && rule.__mapping) {
+      const o = String(orientation).toLowerCase();
+      const mappedO = rule.__mapping.orientation
+        ? String(rule.__mapping.orientation).toLowerCase()
+        : null;
+      if (mappedO && mappedO !== o) {
+        orientationWarning = `No "${o}" layout for SKU ${externalId}; using "${mappedO}" layout. Output may be rotated/cropped.`;
+        console.warn(`[Imposition] ${orientationWarning}`);
+      } else if (!mappedO) {
+        // Orientation-agnostic mapping — fine, no warning
+      }
+    }
 
     const { cols, rows, itemWidth, itemHeight, sheetWidth, sheetHeight, dpi, textOverlays } = rule;
 
@@ -424,6 +551,7 @@ class ImpositionService {
       rowGap: rowGapInches,
       textOverlays: (textOverlays || []).length,
       path: imagePath,
+      orientationWarning,
     };
   }
 
@@ -482,12 +610,17 @@ class ImpositionService {
         }
 
         try {
-          const result = await this.composeSheet(imagePath, externalId, context);
-          results.push({ itemId: item.id, description: item.description, externalId, filename, ...result });
+          const result = await this.composeSheet(imagePath, externalId, context, image.orientation);
+          results.push({
+            itemId: item.id, description: item.description, externalId, filename,
+            orientation: image.orientation || null,
+            ...result,
+          });
         } catch (err) {
           console.error(`[Imposition] Error composing ${filename}:`, err.message);
           results.push({
             itemId: item.id, description: item.description, externalId, filename,
+            orientation: image.orientation || null,
             imposed: false, reason: err.message,
           });
         }

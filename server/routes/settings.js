@@ -315,11 +315,15 @@ router.get('/imposition/mappings', async (req, res) => {
 
 router.post('/imposition/mappings', async (req, res) => {
   try {
-    const { externalId, layoutId } = req.body;
+    const { externalId, layoutId, orientation } = req.body;
     if (!externalId || !layoutId) {
       return res.status(400).json({ error: 'externalId and layoutId are required' });
     }
-    const mappings = await impositionService.addMapping(externalId, layoutId);
+    const mappings = await impositionService.addMapping(
+      externalId,
+      layoutId,
+      orientation || null
+    );
     res.json({ success: true, mappings });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -328,7 +332,26 @@ router.post('/imposition/mappings', async (req, res) => {
 
 router.delete('/imposition/mappings/:externalId', async (req, res) => {
   try {
-    const mappings = await impositionService.deleteMapping(req.params.externalId);
+    const orientation = req.query.orientation || null;
+    const mappings = await impositionService.deleteMapping(req.params.externalId, orientation);
+    res.json({ success: true, mappings });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.put('/imposition/mappings/:externalId', async (req, res) => {
+  try {
+    const oldOrientation = req.query.orientation || null;
+    const { layoutId, orientation } = req.body;
+    const updates = {};
+    if (layoutId !== undefined) updates.layoutId = layoutId;
+    if (orientation !== undefined) updates.orientation = orientation; // '' or null = any
+    const mappings = await impositionService.updateMapping(
+      req.params.externalId,
+      oldOrientation,
+      updates
+    );
     res.json({ success: true, mappings });
   } catch (error) {
     res.status(400).json({ error: error.message });

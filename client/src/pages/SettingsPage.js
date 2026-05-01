@@ -15,13 +15,28 @@ export default function SettingsPage({ user }) {
   const [editPassword, setEditPassword] = useState('');
   const isAdmin = user?.role === 'admin';
 
+  // My Profile (current user's own settings)
+  const [profileDownloadPath, setProfileDownloadPath] = useState(user?.downloadPath || '');
+  const [profileDisplayName, setProfileDisplayName] = useState(user?.displayName || '');
+  const [profilePassword, setProfilePassword] = useState('');
+  const [profileSavedPath, setProfileSavedPath] = useState(user?.downloadPath || '');
+  useEffect(() => {
+    setProfileDownloadPath(user?.downloadPath || '');
+    setProfileSavedPath(user?.downloadPath || '');
+    setProfileDisplayName(user?.displayName || '');
+  }, [user?.downloadPath, user?.displayName]);
+
   // Imposition
   const [layouts, setLayouts] = useState([]);
   const [mappings, setMappings] = useState([]);
   const [textVariables, setTextVariables] = useState([]);
   const [editingLayout, setEditingLayout] = useState(null);
   const [showLayoutForm, setShowLayoutForm] = useState(false);
-  const [newMapping, setNewMapping] = useState({ externalId: '', layoutId: '' });
+  const [newMapping, setNewMapping] = useState({ externalId: '', layoutId: '', orientation: '' });
+  // Inline-edit state for an existing mapping. Keyed by `${externalId}__${orientation || 'any'}`
+  // so we know which row is in edit mode and what its working values are.
+  const [editingMapping, setEditingMapping] = useState(null);
+  // editingMapping shape: { key, externalId, oldOrientation, layoutId, orientation }
 
   // Layout form
   const emptyLayout = {
@@ -240,16 +255,60 @@ export default function SettingsPage({ user }) {
 
   // ─── Mapping CRUD ───────────────────────────────────────
   const addMappingHandler = async () => {
-    if (!newMapping.externalId || !newMapping.layoutId) { setError('Both fields required'); return; }
+    if (!newMapping.externalId || !newMapping.layoutId) { setError('External ID and Layout are required'); return; }
     clearMessages();
-    try { await api.addImpositionMapping(newMapping.externalId, newMapping.layoutId); setNewMapping({ externalId: '', layoutId: '' }); setSuccess('Mapping added'); await loadImposition(); }
+    try {
+      // Empty string = "any orientation"; pass null in that case so backend treats it as agnostic
+      const orientation = newMapping.orientation || null;
+      await api.addImpositionMapping(newMapping.externalId, newMapping.layoutId, orientation);
+      setNewMapping({ externalId: '', layoutId: '', orientation: '' });
+      setSuccess('Mapping added');
+      await loadImposition();
+    }
     catch (err) { setError(err.message); }
   };
 
-  const deleteMappingHandler = async (externalId) => {
+  const deleteMappingHandler = async (externalId, orientation = null) => {
     clearMessages();
-    try { await api.deleteImpositionMapping(externalId); setSuccess('Mapping removed'); await loadImposition(); }
+    try { await api.deleteImpositionMapping(externalId, orientation); setSuccess('Mapping removed'); await loadImposition(); }
     catch (err) { setError(err.message); }
+  };
+
+  const startEditMapping = (mapping) => {
+    clearMessages();
+    setEditingMapping({
+      key: `${mapping.externalId}__${mapping.orientation || 'any'}`,
+      externalId: mapping.externalId,
+      oldOrientation: mapping.orientation || null,
+      layoutId: mapping.layoutId,
+      orientation: mapping.orientation || '',
+    });
+  };
+
+  const cancelEditMapping = () => {
+    setEditingMapping(null);
+    clearMessages();
+  };
+
+  const saveEditMapping = async () => {
+    if (!editingMapping) return;
+    if (!editingMapping.layoutId) { setError('Layout is required'); return; }
+    clearMessages();
+    try {
+      await api.updateImpositionMapping(
+        editingMapping.externalId,
+        editingMapping.oldOrientation,
+        {
+          layoutId: editingMapping.layoutId,
+          orientation: editingMapping.orientation || null,
+        }
+      );
+      setEditingMapping(null);
+      setSuccess('Mapping updated');
+      await loadImposition();
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   // ─── Template CRUD ──────────────────────────────────────
@@ -404,6 +463,7 @@ export default function SettingsPage({ user }) {
         <button className={`tab ${activeSection === 'filename' ? 'active' : ''}`} onClick={() => setActiveSection('filename')}>Filename Config</button>
         <button className={`tab ${activeSection === 'paths' ? 'active' : ''}`} onClick={() => setActiveSection('paths')}>Paths</button>
         <button className={`tab ${activeSection === 'packaging' ? 'active' : ''}`} onClick={() => setActiveSection('packaging')}>Packaging</button>
+        {user && <button className={`tab ${activeSection === 'profile' ? 'active' : ''}`} onClick={() => setActiveSection('profile')}>My Profile</button>}
         {isAdmin && <button className={`tab ${activeSection === 'setup' ? 'active' : ''}`} onClick={() => setActiveSection('setup')}>Setup</button>}
         {isAdmin && <button className={`tab ${activeSection === 'users' ? 'active' : ''}`} onClick={() => setActiveSection('users')}>Users</button>}
       </div>
@@ -898,13 +958,21 @@ export default function SettingsPage({ user }) {
               <h3 className="card-title">Product → Layout Mappings</h3>
             </div>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>
-              Map a product's External ID to an imposition layout. Matching items are automatically composed during order processing.
+              Map a product's External ID to an imposition layout. Optionally, set a different layout per orientation — when an order comes in, the matching orientation's layout is used. "Any" applies to both vertical and horizontal images.
             </p>
 
             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 20, flexWrap: 'wrap' }}>
-              <div className="form-group" style={{ marginBottom: 0, flex: '0 0 140px' }}>
+              <div className="form-group" style={{ marginBottom: 0, flex: '0 0 120px' }}>
                 <label className="form-label">External ID</label>
                 <input className="form-input" value={newMapping.externalId} onChange={(e) => setNewMapping({ ...newMapping, externalId: e.target.value })} placeholder="e.g., 12" />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0, flex: '0 0 130px' }}>
+                <label className="form-label">Orientation</label>
+                <select className="form-select" value={newMapping.orientation} onChange={(e) => setNewMapping({ ...newMapping, orientation: e.target.value })}>
+                  <option value="">Any</option>
+                  <option value="vertical">Vertical</option>
+                  <option value="horizontal">Horizontal</option>
+                </select>
               </div>
               <div className="form-group" style={{ marginBottom: 0, flex: '1 1 200px' }}>
                 <label className="form-label">Layout</label>
@@ -921,15 +989,60 @@ export default function SettingsPage({ user }) {
             {mappings.length > 0 ? (
               <div className="table-wrapper">
                 <table>
-                  <thead><tr><th>External ID</th><th>Layout</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>External ID</th><th>Orientation</th><th>Layout</th><th>Actions</th></tr></thead>
                   <tbody>
-                    {mappings.map(m => (
-                      <tr key={m.externalId}>
-                        <td className="mono" style={{ fontWeight: 600 }}>{m.externalId}</td>
-                        <td>{m.layoutName}</td>
-                        <td><button className="btn btn-sm btn-danger" onClick={() => deleteMappingHandler(m.externalId)}>Remove</button></td>
-                      </tr>
-                    ))}
+                    {mappings.map(m => {
+                      const rowKey = `${m.externalId}__${m.orientation || 'any'}`;
+                      const isEditing = editingMapping && editingMapping.key === rowKey;
+                      if (isEditing) {
+                        return (
+                          <tr key={rowKey}>
+                            <td className="mono" style={{ fontWeight: 600 }}>{m.externalId}</td>
+                            <td>
+                              <select
+                                className="form-select"
+                                value={editingMapping.orientation}
+                                onChange={(e) => setEditingMapping({ ...editingMapping, orientation: e.target.value })}
+                                style={{ minWidth: 110 }}
+                              >
+                                <option value="">Any</option>
+                                <option value="vertical">Vertical</option>
+                                <option value="horizontal">Horizontal</option>
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                className="form-select"
+                                value={editingMapping.layoutId}
+                                onChange={(e) => setEditingMapping({ ...editingMapping, layoutId: e.target.value })}
+                              >
+                                <option value="">Select a layout...</option>
+                                {layouts.map(l => (
+                                  <option key={l.id} value={l.id}>{l.name} ({l.cols}×{l.rows} on {l.sheetWidth}"×{l.sheetHeight}")</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <button className="btn btn-sm btn-primary" onClick={saveEditMapping} style={{ marginRight: 4 }}>Save</button>
+                              <button className="btn btn-sm" onClick={cancelEditMapping}>Cancel</button>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return (
+                        <tr key={rowKey}>
+                          <td className="mono" style={{ fontWeight: 600 }}>{m.externalId}</td>
+                          <td style={{ textTransform: 'capitalize', color: m.orientation ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                            {m.orientation || 'any'}
+                          </td>
+                          <td>{m.layoutName}</td>
+                          <td>
+                            <button className="btn btn-sm" onClick={() => startEditMapping(m)} style={{ marginRight: 4 }}>Edit</button>
+                            <button className="btn btn-sm btn-danger" onClick={() => deleteMappingHandler(m.externalId, m.orientation)}>Remove</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1414,6 +1527,123 @@ export default function SettingsPage({ user }) {
           </button>
         </div>
       )}
+
+      {/* ═══ MY PROFILE ═════════════════════════════════════════ */}
+      {activeSection === 'profile' && user && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">My Profile</h3>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+            These settings apply only to you ({user.username}). When you process orders, files will be saved to your personal download path instead of the shared path. Other users are not affected.
+          </p>
+
+          <div style={{ marginBottom: 20, padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--text-muted)' }}>
+            <strong style={{ color: 'var(--text-primary)' }}>Currently active path:</strong>{' '}
+            {profileSavedPath
+              ? <span className="mono" style={{ color: 'var(--accent)' }}>{profileSavedPath}</span>
+              : <span>Using shared/global path (no personal override)</span>}
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">My Download Base Path</label>
+            <input
+              className="form-input mono"
+              type="text"
+              value={profileDownloadPath}
+              onChange={(e) => setProfileDownloadPath(e.target.value)}
+              placeholder="e.g. C:\Users\Joey\PrintQueue or leave blank to use shared path"
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              Supports the same variables as the shared Paths section ({'{date}'}, {'{gallery}'}, {'{order_id}'}, {'{studio}'}, etc.). Leave blank to fall back to the shared path.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Display Name</label>
+            <input
+              className="form-input"
+              type="text"
+              value={profileDisplayName}
+              onChange={(e) => setProfileDisplayName(e.target.value)}
+              placeholder={user.username}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">New Password</label>
+            <input
+              className="form-input"
+              type="password"
+              value={profilePassword}
+              onChange={(e) => setProfilePassword(e.target.value)}
+              placeholder="Leave blank to keep current password"
+              autoComplete="new-password"
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-primary"
+              disabled={loading}
+              onClick={async () => {
+                setLoading(true); setError(null); setSuccess(null);
+                try {
+                  const updates = {};
+                  if (profileDownloadPath !== (user.downloadPath || '')) {
+                    updates.downloadPath = profileDownloadPath; // empty string clears it
+                  }
+                  if (profileDisplayName !== (user.displayName || '')) {
+                    updates.displayName = profileDisplayName;
+                  }
+                  if (profilePassword) {
+                    updates.password = profilePassword;
+                  }
+                  if (Object.keys(updates).length === 0) {
+                    setError('No changes to save');
+                  } else {
+                    const result = await api.updateProfile(updates);
+                    setSuccess('Profile updated. Changes apply on your next order processing.');
+                    setProfilePassword('');
+                    if (result?.user?.downloadPath !== undefined) {
+                      setProfileSavedPath(result.user.downloadPath || '');
+                    }
+                  }
+                } catch (e) {
+                  setError(e.message);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+            >
+              Save Profile
+            </button>
+            {profileSavedPath && (
+              <button
+                className="btn btn-secondary"
+                disabled={loading}
+                onClick={async () => {
+                  if (!window.confirm('Clear your personal download path? You will fall back to the shared path.')) return;
+                  setLoading(true); setError(null); setSuccess(null);
+                  try {
+                    await api.updateProfile({ downloadPath: '' });
+                    setProfileDownloadPath('');
+                    setProfileSavedPath('');
+                    setSuccess('Personal path cleared. Now using shared path.');
+                  } catch (e) {
+                    setError(e.message);
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Clear My Path
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ═══ SETUP (env overrides) ══════════════════════════════ */}
       {activeSection === 'packaging' && (
         <div>
@@ -1654,30 +1884,61 @@ export default function SettingsPage({ user }) {
           {/* Magnet Threshold */}
           <div className="card" style={{ marginBottom: 20 }}>
             <h3>Magnet Threshold</h3>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
-              This many or more magnet sets force Package service instead of Flat.
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Combined count across all listed Magnet SKUs. When the total count of items with these SKUs reaches the threshold, the order ships as a Package instead of a Flat envelope.
             </p>
-            {packagingConfig && (
-              <div className="form-row" style={{ gap: 8, alignItems: 'center' }}>
-                <label style={{ fontSize: 13 }}>Magnet SKU:</label>
-                <input className="form-input" value={packagingConfig.magnetSKU || '15'} style={{ width: 60 }}
-                  onChange={async (e) => {
-                    try {
-                      await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ magnetSKU: e.target.value }) });
-                      loadPackaging();
-                    } catch (err) { setError(err.message); }
-                  }} />
-                <label style={{ fontSize: 13 }}>Threshold:</label>
-                <input className="form-input" type="number" min="1" value={packagingConfig.magnetPackageThreshold || 3} style={{ width: 60 }}
-                  onChange={async (e) => {
-                    try {
-                      await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ magnetPackageThreshold: parseInt(e.target.value) || 3 }) });
-                      loadPackaging();
-                    } catch (err) { setError(err.message); }
-                  }} />
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>or more sets</span>
-              </div>
-            )}
+            {packagingConfig && (() => {
+              const rule = packagingConfig.magnetThreshold || { skus: ['15'], threshold: 3 };
+              const skuList = Array.isArray(rule.skus) ? rule.skus : [];
+              const skuText = skuList.join(', ');
+
+              const saveRule = async (newRule) => {
+                try {
+                  await api._fetch('/settings/packaging', {
+                    method: 'PUT',
+                    body: JSON.stringify({ magnetThreshold: newRule }),
+                  });
+                  loadPackaging();
+                } catch (err) { setError(err.message); }
+              };
+
+              return (
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: '1 1 280px' }}>
+                    <label className="form-label" style={{ fontSize: 13 }}>Magnet SKUs (comma-separated)</label>
+                    <input
+                      className="form-input mono"
+                      defaultValue={skuText}
+                      placeholder="e.g., 15, 17"
+                      onBlur={(e) => {
+                        const newSkus = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                        if (newSkus.join(',') !== skuList.join(',')) {
+                          saveRule({ skus: newSkus, threshold: rule.threshold });
+                        }
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: '0 0 120px' }}>
+                    <label className="form-label" style={{ fontSize: 13 }}>Threshold</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="1"
+                      defaultValue={rule.threshold || 3}
+                      onBlur={(e) => {
+                        const n = parseInt(e.target.value, 10) || 3;
+                        if (n !== rule.threshold) saveRule({ skus: skuList, threshold: n });
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                    />
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'flex-end', paddingBottom: 8 }}>
+                    or more sets total
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Framed Pano SKUs */}

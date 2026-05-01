@@ -4,6 +4,29 @@ const orderDatabase = require('../services/orderDatabase');
 const schedulerService = require('../services/schedulerService');
 const qrcodeService = require('../services/qrcodeService');
 const fileService = require('../services/fileService');
+const authService = require('../services/authService');
+
+/**
+ * Resolve the requesting user's custom download path, if any.
+ * Falls back to null (use global) when:
+ *   - no session header is present (e.g. background scheduler)
+ *   - session is invalid/expired
+ *   - user has no downloadPath set
+ */
+async function getUserDownloadPath(req) {
+  // Prefer middleware-populated req.user when available
+  if (req.user && req.user.downloadPath) return req.user.downloadPath;
+  if (req.user) return null; // user populated but no custom path
+
+  const sessionId = req.headers['x-session-id'];
+  if (!sessionId) return null;
+  try {
+    const user = await authService.validateSession(sessionId);
+    return user?.downloadPath || null;
+  } catch (err) {
+    return null;
+  }
+}
 
 // ─── ORDER COUNTS / DASHBOARD ───────────────────────────────
 router.get('/counts', async (req, res) => {
@@ -303,7 +326,10 @@ router.put('/:orderNum/update-data', async (req, res) => {
 
     // Try to download images with the fresh URLs
     try {
-      const downloadResult = await fileService.downloadOrderImages(orderData, { forceRedownload: true });
+      const userDownloadPath = await getUserDownloadPath(req);
+      const dlOptions = { forceRedownload: true };
+      if (userDownloadPath) dlOptions.downloadPath = userDownloadPath;
+      const downloadResult = await fileService.downloadOrderImages(orderData, dlOptions);
       console.log(`[Orders] Downloaded ${downloadResult.successCount} images for ${orderNum}`);
       await orderDatabase.updateOrder(orderNum, { downloadPath: downloadResult.orderDir });
       res.json({ success: true, orderNum, downloads: downloadResult.successCount, errors: downloadResult.errorCount });
@@ -340,7 +366,11 @@ router.put('/settings/auto-fetch', async (req, res) => {
 // Process a single order (download images, generate txt, mark processed)
 router.post('/process/:orderNum', async (req, res) => {
   try {
-    const result = await schedulerService.processOrder(req.params.orderNum, req.body);
+    const userDownloadPath = await getUserDownloadPath(req);
+    const options = { ...req.body };
+    // Only override if user has a custom path AND the request didn't already specify one
+    if (userDownloadPath && !options.downloadPath) options.downloadPath = userDownloadPath;
+    const result = await schedulerService.processOrder(req.params.orderNum, options);
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -350,11 +380,14 @@ router.post('/process/:orderNum', async (req, res) => {
 // Reprocess an order (re-download images, re-generate txt, etc.)
 router.post('/reprocess/:orderNum', async (req, res) => {
   try {
-    const result = await schedulerService.processOrder(req.params.orderNum, {
+    const userDownloadPath = await getUserDownloadPath(req);
+    const options = {
       ...req.body,
       reprocess: true,
       forceRedownload: true,
-    });
+    };
+    if (userDownloadPath && !options.downloadPath) options.downloadPath = userDownloadPath;
+    const result = await schedulerService.processOrder(req.params.orderNum, options);
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -364,7 +397,10 @@ router.post('/reprocess/:orderNum', async (req, res) => {
 // Process all unprocessed orders
 router.post('/process-all', async (req, res) => {
   try {
-    const result = await schedulerService.processAllUnprocessed(req.body);
+    const userDownloadPath = await getUserDownloadPath(req);
+    const options = { ...req.body };
+    if (userDownloadPath && !options.downloadPath) options.downloadPath = userDownloadPath;
+    const result = await schedulerService.processAllUnprocessed(options);
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -413,7 +449,11 @@ router.post('/:orderNum/reprint-item', async (req, res) => {
 
     // Use today's date folder for reprints (not the original order's download path)
     const fileService = require('../services/fileService');
-    const orderDir = await fileService.getOrderDir(orderData);
+    const userDownloadPath = await getUserDownloadPath(req);
+    const orderDir = await fileService.getOrderDir(
+      orderData,
+      userDownloadPath ? { downloadPath: userDownloadPath } : {}
+    );
     await fs.ensureDir(orderDir);
 
     console.log(`[Reprint] Starting reprint for ${orderNum} item: ${item.description} (externalId: ${item.externalId})`);

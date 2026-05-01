@@ -9,12 +9,32 @@ class AuthService {
     return databaseService.getDb();
   }
 
+  /**
+   * Ensure the users table has the download_path column.
+   * Safe to call repeatedly — checks before altering.
+   */
+  ensureSchema() {
+    if (this._schemaChecked) return;
+    try {
+      const cols = this.db.prepare("PRAGMA table_info(users)").all();
+      const hasDownloadPath = cols.some(c => c.name === 'download_path');
+      if (!hasDownloadPath) {
+        console.log('[AuthService] Migrating users table: adding download_path column');
+        this.db.prepare('ALTER TABLE users ADD COLUMN download_path TEXT').run();
+      }
+      this._schemaChecked = true;
+    } catch (err) {
+      console.error('[AuthService] Schema migration error:', err.message);
+    }
+  }
+
   // ─── AUTHENTICATION ─────────────────────────────────────
 
   /**
    * Authenticate a user and create a session.
    */
   async login(username, password) {
+    this.ensureSchema();
     const user = this.db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(username);
     if (!user) throw new Error('Invalid username or password');
 
@@ -47,6 +67,7 @@ class AuthService {
    */
   async validateSession(sessionId) {
     if (!sessionId) return null;
+    this.ensureSchema();
 
     const session = this.db.prepare(`
       SELECT s.*, u.* FROM sessions s
@@ -117,6 +138,11 @@ class AuthService {
       fields.push('role = ?'); values.push(updates.role);
     }
     if (updates.active !== undefined) { fields.push('active = ?'); values.push(updates.active ? 1 : 0); }
+    if (updates.downloadPath !== undefined) {
+      // Empty string clears the path (falls back to global). null/undefined leaves unchanged.
+      const dp = updates.downloadPath === '' ? null : updates.downloadPath;
+      fields.push('download_path = ?'); values.push(dp);
+    }
     if (updates.password) {
       const hash = await bcrypt.hash(updates.password, 10);
       fields.push('password_hash = ?'); values.push(hash);
@@ -166,6 +192,7 @@ class AuthService {
       displayName: user.display_name,
       role: user.role,
       active: !!user.active,
+      downloadPath: user.download_path || null,
       createdAt: user.created_at,
       updatedAt: user.updated_at,
       lastLoginAt: user.last_login_at,

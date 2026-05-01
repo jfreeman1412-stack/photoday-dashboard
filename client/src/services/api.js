@@ -79,6 +79,9 @@ class ApiService {
   updateUser(id, data) { return this._fetch(`/auth/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }); }
   deleteUser(id) { return this._fetch(`/auth/users/${id}`, { method: 'DELETE' }); }
 
+  // Update own profile (any authenticated user)
+  updateProfile(data) { return this._fetch('/auth/profile', { method: 'PUT', body: JSON.stringify(data) }); }
+
   // Activity log
   getActivityLog(params = {}) {
     const qs = new URLSearchParams(params).toString();
@@ -268,13 +271,26 @@ class ApiService {
     return this._fetch(`/settings/imposition/layouts/${id}`, { method: 'DELETE' });
   }
 
-  // Imposition Mappings (externalId → layout)
+  // Imposition Mappings (externalId → layout, optionally per orientation)
   getImpositionMappings() { return this._fetch('/settings/imposition/mappings'); }
-  addImpositionMapping(externalId, layoutId) {
-    return this._fetch('/settings/imposition/mappings', { method: 'POST', body: JSON.stringify({ externalId, layoutId }) });
+  addImpositionMapping(externalId, layoutId, orientation = null) {
+    return this._fetch('/settings/imposition/mappings', {
+      method: 'POST',
+      body: JSON.stringify({ externalId, layoutId, orientation }),
+    });
   }
-  deleteImpositionMapping(externalId) {
-    return this._fetch(`/settings/imposition/mappings/${externalId}`, { method: 'DELETE' });
+  // updates: { layoutId?, orientation? } — orientation may be '' to mean "any".
+  // oldOrientation identifies which row to update (null/'' for an existing "any" mapping).
+  updateImpositionMapping(externalId, oldOrientation, updates) {
+    const qs = oldOrientation ? `?orientation=${encodeURIComponent(oldOrientation)}` : '';
+    return this._fetch(`/settings/imposition/mappings/${externalId}${qs}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  }
+  deleteImpositionMapping(externalId, orientation = null) {
+    const qs = orientation ? `?orientation=${encodeURIComponent(orientation)}` : '';
+    return this._fetch(`/settings/imposition/mappings/${externalId}${qs}`, { method: 'DELETE' });
   }
 
   // ─── PRINT SHEETS ──────────────────────────────────────

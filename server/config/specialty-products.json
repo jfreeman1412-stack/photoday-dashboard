@@ -45,6 +45,21 @@
       "externalId": "34",
       "productName": "12x36 Pano",
       "subfolder": "12x36 Pano"
+    },
+    {
+      "externalId": "810P",
+      "productName": "8x10 Canvas Wrap",
+      "subfolder": "8x10 Canvas Wrap"
+    },
+    {
+      "externalId": "11114P",
+      "productName": "11x14 Canvas Wrap",
+      "subfolder": "11x14 Canvas Wrap"
+    },
+    {
+      "externalId": "1620P",
+      "productName": "16x20 Canvas Wrap",
+      "subfolder": "16x20 Canvas Wrap"
     }
   ],
   "highlightColors": {

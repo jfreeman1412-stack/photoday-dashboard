@@ -52,12 +52,15 @@ class ShipStationService {
     return new Promise((resolve, reject) => {
       const req = https.request({
         hostname: url.hostname,
+        port: url.port || 443,
         path: url.pathname,
         method: 'POST',
         headers: {
           'Authorization': `Basic ${authString}`,
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(jsonBody),
+          'Accept': 'application/json',
+          'User-Agent': 'sportsline-dashboard/1.0',
         },
       }, (res) => {
         let body = '';
@@ -66,9 +69,9 @@ class ShipStationService {
           if (res.statusCode >= 200 && res.statusCode < 300) {
             try { resolve(JSON.parse(body)); } catch { resolve(body); }
           } else {
-            console.error(`[ShipStation Error] ${res.statusCode}: ${body}`);
+            console.error(`[ShipStation Error] ${res.statusCode}: ${body || '(empty body)'}`);
             console.error(`[ShipStation Request Body]`, jsonBody);
-            reject(new Error(`ShipStation ${res.statusCode}: ${body}`));
+            reject(new Error(`ShipStation ${res.statusCode}: ${body || '(empty)'}`));
           }
         });
       });
@@ -157,29 +160,6 @@ class ShipStationService {
       console.warn(`[ShipStation] Order ${pdxOrder.num}: No shipping destination — using studio address as placeholder`);
     }
 
-    const items = [];
-    for (const item of pdxOrder.items || []) {
-      items.push({
-        lineItemKey: String(item.id || ''),
-        sku: String(item.externalId || ''),
-        name: String(item.description || 'Photo Product'),
-        quantity: item.quantity || 1,
-        unitPrice: 0,
-        options: [
-          { name: 'Images', value: String((item.images || []).length) + ' file(s)' },
-          { name: 'GroupId', value: String(item.groupId || 'default') },
-        ],
-      });
-    }
-
-    const internalNotes = [
-      `Gallery: ${pdxOrder.gallery || 'N/A'}`,
-      `Studio: ${pdxOrder.studio?.name || 'N/A'}`,
-      `PDX Order ID: ${pdxOrder.id}`,
-      `Items: ${items.length}`,
-      pdxOrder.groups?.length > 1 ? `Bulk Order (${pdxOrder.groups.length} groups)` : 'Dropship Order',
-    ].join(' | ');
-
     // ─── Use Packaging Rules Engine ─────────────────────
     let packaging;
     try {
@@ -197,12 +177,72 @@ class ShipStationService {
         carrierCode: 'stamps_com',
         serviceCode: 'usps_first_class_mail',
         packageCode: 'large_envelope_or_flat',
+        itemWeights: [],
       };
     }
 
+    // Build line items, attaching per-item weights from the packaging engine.
+    // ShipStation sums line-item weights when SKUs match product records with default
+    // weights — so we MUST set per-item weights or our order-level weight gets overwritten.
+    // We send weights in GRAMS (integers) rather than ounces because ShipStation
+    // truncates fractional ounces per line before summing — losing up to ~1oz on
+    // multi-line orders. Grams are integer-valued so this lossy rounding can't bite us.
+    const OZ_TO_G = 28.3495;
+    const itemWeightMap = {};
+    for (const iw of (packaging.itemWeights || [])) {
+      if (iw.lineItemKey) itemWeightMap[iw.lineItemKey] = iw.weightOz;
+    }
+
+    const items = [];
+    for (const item of pdxOrder.items || []) {
+      const lineItemKey = String(item.id || '');
+      const lineWeightOz = itemWeightMap[lineItemKey];
+      const itemPayload = {
+        lineItemKey,
+        sku: String(item.externalId || ''),
+        name: String(item.description || 'Photo Product'),
+        quantity: item.quantity || 1,
+        unitPrice: 0,
+        options: [
+          { name: 'Images', value: String((item.images || []).length) + ' file(s)' },
+          { name: 'GroupId', value: String(item.groupId || 'default') },
+        ],
+      };
+      // Per-quantity weight: ShipStation expects the unit weight; it multiplies by quantity itself.
+      // Our packaging engine returns line-total weight (qty × unit), so divide back out,
+      // then convert to grams.
+      if (lineWeightOz !== undefined) {
+        const qty = item.quantity || 1;
+        const unitWeightOz = qty > 0 ? (lineWeightOz / qty) : lineWeightOz;
+        const unitWeightG = Math.round(unitWeightOz * OZ_TO_G);
+        itemPayload.weight = {
+          value: unitWeightG,
+          units: 'grams',
+        };
+      }
+      items.push(itemPayload);
+    }
+
+    const internalNotes = [
+      `Gallery: ${pdxOrder.gallery || 'N/A'}`,
+      `Studio: ${pdxOrder.studio?.name || 'N/A'}`,
+      `PDX Order ID: ${pdxOrder.id}`,
+      `Items: ${items.length}`,
+      pdxOrder.groups?.length > 1 ? `Bulk Order (${pdxOrder.groups.length} groups)` : 'Dropship Order',
+    ].join(' | ');
+
     // Allow manual overrides to take precedence
-    const finalWeight = overrides.weight || packaging.weight;
+    const finalWeightOz = overrides.weight || packaging.weight;
     const finalDims = overrides.dimensions || packaging.dimensions;
+    const finalCarrier = overrides.carrierCode || packaging.carrierCode || null;
+    const finalService = overrides.serviceCode || packaging.serviceCode || null;
+    const finalPackage = overrides.packageCode || packaging.packageCode || null;
+
+    // Convert order-level weight to grams to match line items (avoids ShipStation's
+    // per-line oz truncation behavior on multi-item orders).
+    const finalWeightG = (finalWeightOz && typeof finalWeightOz.value === 'number')
+      ? { value: Math.round(finalWeightOz.value * OZ_TO_G), units: 'grams' }
+      : finalWeightOz;
 
     const payload = {
       orderNumber: pdxOrder.num,
@@ -214,13 +254,16 @@ class ShipStationService {
       shipTo,
       items,
       internalNotes: internalNotes + ` | Pkg: ${packaging.packageTypeName} | ${packaging.carrierCode}/${packaging.serviceCode}/${packaging.packageCode}`,
-      weight: finalWeight,
+      weight: finalWeightG,
       dimensions: finalDims,
       confirmation: 'none',
-      requestedShippingService: packaging.serviceCode || null,
+      carrierCode: finalCarrier,
+      serviceCode: finalService,
+      packageCode: finalPackage,
+      requestedShippingService: finalService,
     };
 
-    console.log(`[ShipStation] Built order payload for ${pdxOrder.num}: ${items.length} items, ship to ${shipTo.name} (${shipTo.city}, ${shipTo.state})`);
+    console.log(`[ShipStation] Built order payload for ${pdxOrder.num}: ${items.length} items, ship to ${shipTo.name} (${shipTo.city}, ${shipTo.state}), packageCode=${finalPackage}`);
     return payload;
   }
 }
