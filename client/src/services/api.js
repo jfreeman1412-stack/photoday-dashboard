@@ -237,6 +237,9 @@ class ApiService {
   addSpecialtyProduct(product) {
     return this._fetch('/settings/specialty/products', { method: 'POST', body: JSON.stringify(product) });
   }
+  updateSpecialtyProduct(externalId, updates) {
+    return this._fetch(`/settings/specialty/products/${externalId}`, { method: 'PUT', body: JSON.stringify(updates) });
+  }
   deleteSpecialtyProduct(externalId) {
     return this._fetch(`/settings/specialty/products/${externalId}`, { method: 'DELETE' });
   }

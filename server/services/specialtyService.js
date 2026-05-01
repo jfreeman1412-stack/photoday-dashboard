@@ -80,6 +80,9 @@ class SpecialtyService {
       externalId: String(product.externalId),
       productName: product.productName || '',
       subfolder: product.subfolder || product.productName || product.externalId,
+      // dropShipped: true means this product is fulfilled by another lab — skip ShipStation label.
+      // Default false: most specialty items (acrylics, magnets, etc.) are still shipped from here.
+      dropShipped: !!product.dropShipped,
     });
     await this._write(data);
     return data.products;
@@ -109,6 +112,17 @@ class SpecialtyService {
   async isSpecialty(externalId) {
     const products = await this.getProducts();
     return products.some(p => p.externalId === String(externalId));
+  }
+
+  /**
+   * Check if an externalId is drop-shipped from another lab.
+   * Drop-shipped items skip ShipStation entirely — the other lab handles fulfillment.
+   * A SKU must be a specialty product AND have dropShipped: true.
+   * Most specialty items are NOT drop-shipped — we still ship them from here.
+   */
+  async isDropShipped(externalId) {
+    const product = await this.getProduct(externalId);
+    return !!(product && product.dropShipped);
   }
 
   /**

@@ -64,7 +64,7 @@ export default function SettingsPage({ user }) {
   // Specialty products
   const [specialtyProducts, setSpecialtyProducts] = useState([]);
   const [specialtyBasePath, setSpecialtyBasePath] = useState('');
-  const [newSpecialty, setNewSpecialty] = useState({ externalId: '', productName: '', subfolder: '' });
+  const [newSpecialty, setNewSpecialty] = useState({ externalId: '', productName: '', subfolder: '', dropShipped: false });
   const [highlightColors, setHighlightColors] = useState({ specialty: '#FFF3CD', quantity: '#D4EDDA' });
 
   // Path settings
@@ -389,8 +389,17 @@ export default function SettingsPage({ user }) {
         ...newSpecialty,
         subfolder: newSpecialty.subfolder || newSpecialty.productName,
       });
-      setNewSpecialty({ externalId: '', productName: '', subfolder: '' });
+      setNewSpecialty({ externalId: '', productName: '', subfolder: '', dropShipped: false });
       setSuccess('Specialty product added');
+      await loadSpecialty();
+    } catch (err) { setError(err.message); }
+  };
+
+  const toggleDropShipped = async (externalId, dropShipped) => {
+    clearMessages();
+    try {
+      await api.updateSpecialtyProduct(externalId, { dropShipped });
+      setSuccess(dropShipped ? 'Marked drop-shipped — ShipStation will skip this item' : 'Drop-ship flag cleared');
       await loadSpecialty();
     } catch (err) { setError(err.message); }
   };
@@ -1146,6 +1155,14 @@ export default function SettingsPage({ user }) {
                 onChange={(e) => setNewSpecialty({ ...newSpecialty, subfolder: e.target.value })}
                 placeholder={newSpecialty.productName || 'auto'} />
             </div>
+            <div className="form-group" style={{ marginBottom: 0, flex: '0 0 auto', alignSelf: 'flex-end' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingBottom: 8, cursor: 'pointer' }}
+                title="Check if this product is drop-shipped from another lab. ShipStation labels will be skipped for this item.">
+                <input type="checkbox" checked={!!newSpecialty.dropShipped}
+                  onChange={(e) => setNewSpecialty({ ...newSpecialty, dropShipped: e.target.checked })} />
+                Drop-shipped
+              </label>
+            </div>
             <button className="btn btn-primary btn-sm" onClick={addSpecialty} style={{ marginBottom: 0 }}>Add</button>
           </div>
 
@@ -1153,7 +1170,7 @@ export default function SettingsPage({ user }) {
           {specialtyProducts.length > 0 ? (
             <div className="table-wrapper">
               <table>
-                <thead><tr><th>External ID</th><th>Product Name</th><th>Subfolder</th><th>Full Path</th><th>Actions</th></tr></thead>
+                <thead><tr><th>External ID</th><th>Product Name</th><th>Subfolder</th><th>Full Path</th><th>Drop-Shipped</th><th>Actions</th></tr></thead>
                 <tbody>
                   {specialtyProducts.map(p => (
                     <tr key={p.externalId}>
@@ -1163,6 +1180,14 @@ export default function SettingsPage({ user }) {
                       <td className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                         {specialtyBasePath ? `${specialtyBasePath}\\${p.subfolder}\\` : `Specialty\\${p.subfolder}\\`}
                       </td>
+                      <td>
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}
+                          title="When checked, ShipStation labels are skipped for this item — another lab fulfills it.">
+                          <input type="checkbox" checked={!!p.dropShipped}
+                            onChange={(e) => toggleDropShipped(p.externalId, e.target.checked)} />
+                          {p.dropShipped ? <span style={{ color: 'var(--accent)', fontWeight: 600 }}>Yes</span> : <span style={{ color: 'var(--text-muted)' }}>No</span>}
+                        </label>
+                      </td>
                       <td><button className="btn btn-sm btn-danger" onClick={() => deleteSpecialty(p.externalId)}>Delete</button></td>
                     </tr>
                   ))}
@@ -1171,7 +1196,7 @@ export default function SettingsPage({ user }) {
             </div>
           ) : (
             <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-              No specialty products configured. Items added here will be excluded from Darkroom and routed to their own folders.
+              No specialty products configured. Items added here will be excluded from Darkroom and routed to their own folders. Check "Drop-Shipped" on items fulfilled by another lab to also skip ShipStation label creation.
             </div>
           )}
 
@@ -1977,6 +2002,30 @@ export default function SettingsPage({ user }) {
                     }} />
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→ 31×11×2</span>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Box Route SKUs */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Box Route SKUs</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              SKUs that should ship in a Medium Box rather than a flat mailer. Use for plaques, canvas wraps, framed prints, mouse pads, or any rigid product that won't survive an envelope. SKUs 21 and 22 are already handled by a hardcoded plaque rule and don't need to be added here.
+            </p>
+            {packagingConfig && (
+              <div className="form-row" style={{ gap: 8, alignItems: 'center' }}>
+                <label style={{ fontSize: 13, minWidth: 160 }}>Box-route SKUs:</label>
+                <input className="form-input" defaultValue={(packagingConfig.boxRouteSKUs || []).join(', ')}
+                  key={'brs-' + (packagingConfig.boxRouteSKUs || []).join(',')}
+                  placeholder="e.g. 31, 36" style={{ flex: 1 }}
+                  onBlur={async (e) => {
+                    const skus = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                    try {
+                      await api._fetch('/settings/packaging', { method: 'PUT', body: JSON.stringify({ boxRouteSKUs: skus }) });
+                      loadPackaging();
+                    } catch (err) { setError(err.message); }
+                  }} />
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→ Medium Box</span>
               </div>
             )}
           </div>

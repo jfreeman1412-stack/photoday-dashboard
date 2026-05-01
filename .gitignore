@@ -10,3 +10,8 @@ server/config/orders-db.json
 ".env" 
 "dist/" 
 "build/" 
+
+# SQLite databases — contain customer data, never commit
+*.db
+*.db-shm
+*.db-wal

@@ -125,12 +125,54 @@ class ShipStationService {
   /**
    * Build a ShipStation order from a PDX order object.
    * Uses the packaging rules engine to determine dimensions, weight, and service.
+   *
+   * Specialty items (per specialtyService) are filtered out before the packaging engine
+   * sees them — they're drop-shipped from another lab so we don't ship them ourselves.
+   * If ALL items are specialty, returns { __skipShipStation: true, reason } to signal
+   * the caller to skip the createOrder step entirely.
    */
   async buildOrderFromPDX(pdxOrder, overrides = {}) {
     const shipping = pdxOrder.shipping || {};
     const dest = shipping.destination || {};
     const ret = shipping.return || {};
     const studio = pdxOrder.studio || {};
+
+    // ─── Filter drop-shipped items ──────────────────────
+    // Drop-shipped items are fulfilled by another lab — we don't ship them ourselves.
+    // (Note: this is a stricter check than isSpecialty. A specialty item might still
+    // be shipped in-house; only items explicitly flagged dropShipped are skipped.)
+    // Strip them out before the packaging engine and items list see the order.
+    const specialtyService = require('./specialtyService');
+    const originalItemCount = (pdxOrder.items || []).length;
+    const shippableItems = [];
+    const dropShippedItems = [];
+    for (const item of pdxOrder.items || []) {
+      try {
+        const isDropShipped = await specialtyService.isDropShipped(item.externalId);
+        if (isDropShipped) dropShippedItems.push(item);
+        else shippableItems.push(item);
+      } catch (e) {
+        // Defensive: if the check throws, treat as non-drop-shipped (safer to include in label)
+        shippableItems.push(item);
+      }
+    }
+
+    if (originalItemCount > 0 && shippableItems.length === 0) {
+      console.log(`[ShipStation] All ${originalItemCount} item(s) on ${pdxOrder.num} are drop-shipped from another lab. Skipping ShipStation order.`);
+      return {
+        __skipShipStation: true,
+        reason: 'all_items_dropshipped',
+        message: `All ${originalItemCount} items are drop-shipped from another lab. No in-house shipping label needed.`,
+        dropShippedItemCount: dropShippedItems.length,
+      };
+    }
+
+    if (dropShippedItems.length > 0) {
+      console.log(`[ShipStation] Filtered ${dropShippedItems.length} drop-shipped item(s) from ${pdxOrder.num}; ${shippableItems.length} shippable item(s) remain`);
+    }
+
+    // Build a filtered order for the packaging engine — same shape, only shippable items
+    const filteredOrder = { ...pdxOrder, items: shippableItems };
 
     const hasDestAddress = dest.address1 && dest.city && dest.state && dest.zipCode;
     const shipTo = {
@@ -164,7 +206,7 @@ class ShipStationService {
     let packaging;
     try {
       const packagingService = require('./packagingService');
-      packaging = await packagingService.determinePackaging(pdxOrder);
+      packaging = await packagingService.determinePackaging(filteredOrder);
       console.log(`[ShipStation] Packaging for ${pdxOrder.num}: ${packaging.packageTypeName} (${packaging.dimensions.length}x${packaging.dimensions.width}x${packaging.dimensions.height}") ${packaging.weight.value}oz — ${packaging.carrierCode}/${packaging.serviceCode}/${packaging.packageCode}`);
       if (packaging.notes?.length > 0) {
         console.log(`[ShipStation] Packaging notes: ${packaging.notes.join('; ')}`);
@@ -194,7 +236,7 @@ class ShipStationService {
     }
 
     const items = [];
-    for (const item of pdxOrder.items || []) {
+    for (const item of shippableItems) {
       const lineItemKey = String(item.id || '');
       const lineWeightOz = itemWeightMap[lineItemKey];
       const itemPayload = {

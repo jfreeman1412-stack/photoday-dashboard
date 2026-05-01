@@ -213,6 +213,15 @@ router.post('/specialty/products', async (req, res) => {
   }
 });
 
+router.put('/specialty/products/:externalId', async (req, res) => {
+  try {
+    const products = await specialtyService.updateProduct(req.params.externalId, req.body);
+    res.json({ success: true, products });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 router.delete('/specialty/products/:externalId', async (req, res) => {
   try {
     const products = await specialtyService.deleteProduct(req.params.externalId);

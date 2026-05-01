@@ -79,6 +79,14 @@ class PackagingService {
         framedPanoSmallSKUs: [],  // e.g. ['34'] for framed 8x24
         framedPanoLargeSKUs: [],  // e.g. ['37'] for framed 10x30
 
+        // SKUs that need to ship in a box rather than a flat mailer.
+        // Any of these SKUs being present in an order routes the order to a Medium Box
+        // (or Large Box if combined with mug or framed pano triggers).
+        // Use this for plaques, canvas wraps, framed prints, mouse pads, anything rigid.
+        // SKUs 21 & 22 (5x7/8x10 Plaque) are handled by the legacy plaque rule and
+        // don't need to be added here, but adding them is harmless.
+        boxRouteSKUs: [],
+
         // Weight in oz of the 5x8 packing slip included with every order.
         // Default 0.4oz (typical 250gsm photo paper). Adjust if you use heavier/lighter stock.
         packingSlipWeightOz: 0.4,
@@ -119,6 +127,10 @@ class PackagingService {
     }
     if (!Array.isArray(config.magnetThreshold.skus)) {
       config.magnetThreshold.skus = [];
+      dirty = true;
+    }
+    if (!Array.isArray(config.boxRouteSKUs)) {
+      config.boxRouteSKUs = [];
       dirty = true;
     }
 
@@ -277,9 +289,34 @@ class PackagingService {
       }
     }
 
-    // 5. Has Plaque (21 or 22)
-    if (skuSet.has('21') || skuSet.has('22')) {
-      notes.push('Plaque item → Medium Box');
+    // 5. Box-route items (rigid products — plaques, canvas wraps, framed prints, etc.)
+    //    Counts SKUs 21/22 (legacy hardcoded plaques) + any configured boxRouteSKUs.
+    //    Rule:
+    //      1 rigid item  → Medium Box (12×10×2)
+    //      2+ rigid items → Large Box (14×10×6)
+    //    Quantity per line item counts (e.g. qty=2 of one plaque SKU = 2 rigid items).
+    const legacyPlaqueSkus = ['21', '22'];
+    const configuredBoxRouteSkus = (config.boxRouteSKUs || []).map(String);
+    const allBoxRouteSkus = new Set([...legacyPlaqueSkus, ...configuredBoxRouteSkus]);
+
+    let rigidItemCount = 0;
+    const rigidItemDescriptions = [];
+    for (const item of physicalItems) {
+      const sku = String(item.externalId || '');
+      if (allBoxRouteSkus.has(sku)) {
+        const qty = item.quantity || 1;
+        rigidItemCount += qty;
+        const desc = item.description || `SKU ${sku}`;
+        rigidItemDescriptions.push(qty > 1 ? `${qty}× ${desc}` : desc);
+      }
+    }
+
+    if (rigidItemCount >= 2) {
+      notes.push(`${rigidItemCount} rigid items (${rigidItemDescriptions.join(', ')}) → Large Box`);
+      return this._buildResult('large_box', config, totalWeight, notes, pdxOrder);
+    }
+    if (rigidItemCount === 1) {
+      notes.push(`Rigid item (${rigidItemDescriptions[0]}) → Medium Box`);
       return this._buildResult('medium_box', config, totalWeight, notes, pdxOrder);
     }
 
@@ -323,8 +360,8 @@ class PackagingService {
     if (forcePackage) {
       notes.push('Using 9x11 as Package');
       const result = this._buildResult('flat_9x11', config, totalWeight, notes, pdxOrder);
-      // Override service to package
-      result.serviceCode = this._getServiceCode(totalWeight, 'package');
+      // Override service to package, paired with the carrier already chosen by _buildResult
+      result.serviceCode = this._getServiceCode(totalWeight, 'package', result.carrierCode);
       result.packageCode = 'package';
       // Set height to 0.5 for package mailer
       result.dimensions.height = 0.5;
@@ -472,8 +509,9 @@ class PackagingService {
 
     const baseWeight = pkgType.baseWeight || 0;
     const totalWeight = Math.ceil(itemWeight + baseWeight);
-    const serviceCode = this._getServiceCode(totalWeight, pkgType.service);
     const carrierCode = this._getCarrierCode(totalWeight, packageTypeId);
+    // Service is determined AFTER carrier so we never pair USPS services with UPS or vice versa.
+    const serviceCode = this._getServiceCode(totalWeight, pkgType.service, carrierCode);
 
     // Per-item weights — packaging baseWeight + ceiling rounding rolls onto first physical
     // item. The sum equals totalWeight exactly so ShipStation displays the right total
@@ -502,17 +540,26 @@ class PackagingService {
   }
 
   /**
-   * Determine USPS service code based on weight.
+   * Determine the shipping service code, paired correctly with the chosen carrier.
+   * The carrier dictates the service code namespace — USPS services can't ride on UPS
+   * and vice versa. ShipStation rejects mismatched pairs with a 400.
+   *
+   * @param {number} weightOz
+   * @param {string} defaultService - the package type's service field ('large_envelope_or_flat' | 'package')
+   * @param {string} carrierCode - 'stamps_com' | 'ups_walleted' | etc.
    */
-  _getServiceCode(weightOz, defaultService) {
-    if (weightOz > 16) {
-      return 'usps_ground_advantage';
+  _getServiceCode(weightOz, defaultService, carrierCode) {
+    // UPS by ShipStation
+    if (carrierCode === 'ups_walleted') {
+      // Ground Saver is the cheapest UPS option; ground is faster.
+      // For heavy photo orders we prefer Ground Saver — comparable transit to USPS Ground Advantage.
+      return 'ups_ground_saver';
     }
+
+    // Stamps.com / USPS path
+    // Over 13oz, First Class isn't allowed — switch to Ground Advantage.
     if (weightOz > 13) {
       return 'usps_ground_advantage';
-    }
-    if (defaultService === 'package') {
-      return 'usps_first_class_mail';
     }
     return 'usps_first_class_mail';
   }

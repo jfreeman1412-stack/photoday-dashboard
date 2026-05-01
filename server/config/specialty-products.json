@@ -4,17 +4,20 @@
     {
       "externalId": "14",
       "productName": "Photo Statuette - 5x7",
-      "subfolder": "Photo Statuette - 5x7"
+      "subfolder": "Photo Statuette - 5x7",
+      "dropShipped": true
     },
     {
       "externalId": "26",
       "productName": "Acrylic Ornament 3.5x5",
-      "subfolder": "Acrylic Ornament 3.5x5"
+      "subfolder": "Acrylic Ornament 3.5x5",
+      "dropShipped": true
     },
     {
       "externalId": "7",
       "productName": "Key Chain",
-      "subfolder": "Key Chain"
+      "subfolder": "Key Chain",
+      "dropShipped": false
     },
     {
       "externalId": "18",
@@ -47,19 +50,22 @@
       "subfolder": "12x36 Pano"
     },
     {
-      "externalId": "810P",
-      "productName": "8x10 Canvas Wrap",
-      "subfolder": "8x10 Canvas Wrap"
-    },
-    {
-      "externalId": "11114P",
+      "externalId": "47",
       "productName": "11x14 Canvas Wrap",
-      "subfolder": "11x14 Canvas Wrap"
+      "subfolder": "11x14 Canvas Wrap",
+      "dropShipped": true
     },
     {
-      "externalId": "1620P",
+      "externalId": "48",
       "productName": "16x20 Canvas Wrap",
-      "subfolder": "16x20 Canvas Wrap"
+      "subfolder": "16x20 Canvas Wrap",
+      "dropShipped": true
+    },
+    {
+      "externalId": "31",
+      "productName": "8x10 Canvas Wrap",
+      "subfolder": "8x10 Canvas Wrap",
+      "dropShipped": true
     }
   ],
   "highlightColors": {

@@ -225,6 +225,13 @@ export default function OrdersPage() {
       await loadCounts();
       await loadOrders('unprocessed');
       await loadOrders('processed');
+      // If a search is active, refresh the search results so the row reflects the new state
+      if (searchResults !== null && searchQuery.trim().length >= 2) {
+        try {
+          const results = await api._fetch(`/orders/search?q=${encodeURIComponent(searchQuery.trim())}`);
+          setSearchResults(results);
+        } catch { /* ignore — main process succeeded */ }
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -471,45 +478,67 @@ export default function OrdersPage() {
 
                 <td>
                   <div className="btn-group">
-                    {status === 'unprocessed' && (
-                      <button className="btn btn-sm btn-primary" onClick={() => processSingle(order.orderNum)} disabled={loading}>
-                        Process
-                      </button>
-                    )}
-                    {status === 'processed' && (
-                      <>
-                        <button className="btn btn-sm btn-success" onClick={() => {
-                          setShipOrderNum(order.orderNum);
-                          setActiveTab('ship-modal');
-                        }}>
-                          Ship
-                        </button>
-                        <button className="btn btn-sm btn-secondary" onClick={async () => {
-                          clearMessages(); setLoading(true);
-                          try {
-                            await api.reprocessOrder(order.orderNum);
-                            setSuccess(`Reprocessed ${order.orderNum}`);
-                            await loadCounts(); await loadOrders('processed');
-                          } catch (err) { setError(err.message); }
-                          finally { setLoading(false); }
-                        }} disabled={loading} title="Re-download images and regenerate files">
-                          Reprocess
-                        </button>
-                      </>
-                    )}
-                    {status === 'shipped' && (
-                      <button className="btn btn-sm btn-secondary" onClick={async () => {
-                        clearMessages(); setLoading(true);
-                        try {
-                          await api.reprocessOrder(order.orderNum);
-                          setSuccess(`Reprocessed ${order.orderNum}`);
-                          await loadCounts(); await loadOrders('shipped');
-                        } catch (err) { setError(err.message); }
-                        finally { setLoading(false); }
-                      }} disabled={loading} title="Re-download images and regenerate files">
-                        Reprocess
-                      </button>
-                    )}
+                    {(() => {
+                      // In search mode, derive button visibility from each row's own status
+                      // since the table-level `status` prop is "search" (not a real status).
+                      const effectiveStatus = status === 'search' ? (order.status || 'unprocessed') : status;
+                      return (
+                        <>
+                          {effectiveStatus === 'unprocessed' && (
+                            <button className="btn btn-sm btn-primary" onClick={() => processSingle(order.orderNum)} disabled={loading}>
+                              Process
+                            </button>
+                          )}
+                          {(effectiveStatus === 'processed' || effectiveStatus === 'partially_processed') && (
+                            <>
+                              <button className="btn btn-sm btn-success" onClick={() => {
+                                setShipOrderNum(order.orderNum);
+                                setActiveTab('ship-modal');
+                              }}>
+                                Ship
+                              </button>
+                              <button className="btn btn-sm btn-secondary" onClick={async () => {
+                                clearMessages(); setLoading(true);
+                                try {
+                                  await api.reprocessOrder(order.orderNum);
+                                  setSuccess(`Reprocessed ${order.orderNum}`);
+                                  await loadCounts();
+                                  if (status === 'search') {
+                                    // Re-run the search so the row reflects the updated state
+                                    const results = await api._fetch(`/orders/search?q=${encodeURIComponent(searchQuery.trim())}`);
+                                    setSearchResults(results);
+                                  } else {
+                                    await loadOrders('processed');
+                                  }
+                                } catch (err) { setError(err.message); }
+                                finally { setLoading(false); }
+                              }} disabled={loading} title="Re-download images and regenerate files">
+                                Reprocess
+                              </button>
+                            </>
+                          )}
+                          {effectiveStatus === 'shipped' && (
+                            <button className="btn btn-sm btn-secondary" onClick={async () => {
+                              clearMessages(); setLoading(true);
+                              try {
+                                await api.reprocessOrder(order.orderNum);
+                                setSuccess(`Reprocessed ${order.orderNum}`);
+                                await loadCounts();
+                                if (status === 'search') {
+                                  const results = await api._fetch(`/orders/search?q=${encodeURIComponent(searchQuery.trim())}`);
+                                  setSearchResults(results);
+                                } else {
+                                  await loadOrders('shipped');
+                                }
+                              } catch (err) { setError(err.message); }
+                              finally { setLoading(false); }
+                            }} disabled={loading} title="Re-download images and regenerate files">
+                              Reprocess
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </td>
               </tr>

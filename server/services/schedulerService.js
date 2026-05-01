@@ -398,12 +398,23 @@ class SchedulerService {
         shipstationStepOk = true;
       } else {
         const ssPayload = await shipstationService.buildOrderFromPDX(order, options.shipstation || {});
-        shipstationResult = await shipstationService.createOrder(ssPayload);
-        const sentPkg = ssPayload.packageCode;
-        const storedPkg = shipstationResult.packageCode;
-        const drift = sentPkg !== storedPkg ? ` ⚠ drift: sent=${sentPkg}, stored=${storedPkg}` : '';
-        console.log(`[Scheduler] ShipStation order created for ${orderNum}: SS#${shipstationResult.orderId} (packageCode=${storedPkg})${drift}`);
-        shipstationStepOk = true;
+        if (ssPayload && ssPayload.__skipShipStation) {
+          // Specialty-only order — drop-shipped from another lab. No SS order needed.
+          console.log(`[Scheduler] ShipStation skipped for ${orderNum}: ${ssPayload.message}`);
+          shipstationResult = {
+            skipped: true,
+            reason: ssPayload.reason,
+            message: ssPayload.message,
+          };
+          shipstationStepOk = true;
+        } else {
+          shipstationResult = await shipstationService.createOrder(ssPayload);
+          const sentPkg = ssPayload.packageCode;
+          const storedPkg = shipstationResult.packageCode;
+          const drift = sentPkg !== storedPkg ? ` ⚠ drift: sent=${sentPkg}, stored=${storedPkg}` : '';
+          console.log(`[Scheduler] ShipStation order created for ${orderNum}: SS#${shipstationResult.orderId} (packageCode=${storedPkg})${drift}`);
+          shipstationStepOk = true;
+        }
       }
     } catch (ssError) {
       console.error(`[Scheduler] ShipStation creation failed for ${orderNum}:`, ssError.message);
