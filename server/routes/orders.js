@@ -5,25 +5,20 @@ const schedulerService = require('../services/schedulerService');
 const qrcodeService = require('../services/qrcodeService');
 const fileService = require('../services/fileService');
 const authService = require('../services/authService');
+const bulkOrderService = require('../services/bulkOrderService');
 
 /**
- * Resolve the requesting user's custom download path, if any.
- * Falls back to null (use global) when:
- *   - no session header is present (e.g. background scheduler)
- *   - session is invalid/expired
- *   - user has no downloadPath set
+ * Look up the current user's downloadPath override from their session.
+ * Returns the path string or null if no override is set (caller should fall back
+ * to the global default in that case).
  */
 async function getUserDownloadPath(req) {
-  // Prefer middleware-populated req.user when available
-  if (req.user && req.user.downloadPath) return req.user.downloadPath;
-  if (req.user) return null; // user populated but no custom path
-
-  const sessionId = req.headers['x-session-id'];
-  if (!sessionId) return null;
   try {
+    const sessionId = req.headers['x-session-id'];
+    if (!sessionId) return null;
     const user = await authService.validateSession(sessionId);
     return user?.downloadPath || null;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -246,9 +241,16 @@ router.put('/meta/gallery-settings', async (req, res) => {
       ...settings,
     };
 
-    // Remove gallery entry if all settings are default/off
+    // Remove gallery entry only if EVERY tracked setting is default/empty.
+    // Add new settings here as they're introduced.
     const gs = allSettings[gallery];
-    if (!gs.teamEnabled && !gs.autoProcess && (!gs.folderSort || gs.folderSort.length === 0)) {
+    const hasAnySetting =
+      gs.teamEnabled ||
+      gs.autoProcess ||
+      gs.skipShipStation ||
+      (gs.folderSort && gs.folderSort.length > 0) ||
+      (gs.packingSlipPosition === 'first' || gs.packingSlipPosition === 'last');
+    if (!hasAnySetting) {
       delete allSettings[gallery];
     }
 
@@ -326,10 +328,7 @@ router.put('/:orderNum/update-data', async (req, res) => {
 
     // Try to download images with the fresh URLs
     try {
-      const userDownloadPath = await getUserDownloadPath(req);
-      const dlOptions = { forceRedownload: true };
-      if (userDownloadPath) dlOptions.downloadPath = userDownloadPath;
-      const downloadResult = await fileService.downloadOrderImages(orderData, dlOptions);
+      const downloadResult = await fileService.downloadOrderImages(orderData, { forceRedownload: true });
       console.log(`[Orders] Downloaded ${downloadResult.successCount} images for ${orderNum}`);
       await orderDatabase.updateOrder(orderNum, { downloadPath: downloadResult.orderDir });
       res.json({ success: true, orderNum, downloads: downloadResult.successCount, errors: downloadResult.errorCount });
@@ -367,10 +366,25 @@ router.put('/settings/auto-fetch', async (req, res) => {
 router.post('/process/:orderNum', async (req, res) => {
   try {
     const userDownloadPath = await getUserDownloadPath(req);
-    const options = { ...req.body };
-    // Only override if user has a custom path AND the request didn't already specify one
-    if (userDownloadPath && !options.downloadPath) options.downloadPath = userDownloadPath;
-    const result = await schedulerService.processOrder(req.params.orderNum, options);
+    const orderNum = req.params.orderNum;
+
+    // Auto-detect Bulk orders and route to the bulk-specific flow.
+    // Bulk orders need per-dancer txts/slips and skip ShipStation entirely.
+    const localOrder = await orderDatabase.getOrder(orderNum);
+    const isBulk = !!localOrder?.orderData?.isBulkOrder;
+
+    let result;
+    if (isBulk) {
+      result = await schedulerService.processBulkOrder(orderNum, {
+        ...req.body,
+        userDownloadPath,
+      });
+    } else {
+      result = await schedulerService.processOrder(orderNum, {
+        ...req.body,
+        userDownloadPath,
+      });
+    }
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -381,13 +395,26 @@ router.post('/process/:orderNum', async (req, res) => {
 router.post('/reprocess/:orderNum', async (req, res) => {
   try {
     const userDownloadPath = await getUserDownloadPath(req);
-    const options = {
-      ...req.body,
-      reprocess: true,
-      forceRedownload: true,
-    };
-    if (userDownloadPath && !options.downloadPath) options.downloadPath = userDownloadPath;
-    const result = await schedulerService.processOrder(req.params.orderNum, options);
+    const orderNum = req.params.orderNum;
+    const localOrder = await orderDatabase.getOrder(orderNum);
+    const isBulk = !!localOrder?.orderData?.isBulkOrder;
+
+    let result;
+    if (isBulk) {
+      result = await schedulerService.processBulkOrder(orderNum, {
+        ...req.body,
+        reprocess: true,
+        forceRedownload: true,
+        userDownloadPath,
+      });
+    } else {
+      result = await schedulerService.processOrder(orderNum, {
+        ...req.body,
+        reprocess: true,
+        forceRedownload: true,
+        userDownloadPath,
+      });
+    }
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -398,9 +425,69 @@ router.post('/reprocess/:orderNum', async (req, res) => {
 router.post('/process-all', async (req, res) => {
   try {
     const userDownloadPath = await getUserDownloadPath(req);
-    const options = { ...req.body };
-    if (userDownloadPath && !options.downloadPath) options.downloadPath = userDownloadPath;
-    const result = await schedulerService.processAllUnprocessed(options);
+    const result = await schedulerService.processAllUnprocessed({ ...req.body, userDownloadPath });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── TEAM BATCH PROCESSING ────────────────────────────────
+// Process a single order's items for a specific team.
+router.post('/process-team/:orderNum', async (req, res) => {
+  try {
+    const { orderNum } = req.params;
+    const { team } = req.body;
+    if (!team) return res.status(400).json({ error: 'team is required in request body' });
+
+    const userDownloadPath = await getUserDownloadPath(req);
+    const result = await schedulerService.processBatchByTeam(
+      [{ orderNum, teams: [team] }],
+      { batchLabel: team, userDownloadPath }
+    );
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Process MULTIPLE orders for a single team (the "Process 'TeamX' (5)" button).
+// Body: { team: 'TeamA', orderNums: ['BK1', 'BK2', ...] }
+router.post('/process-team-batch', async (req, res) => {
+  try {
+    const { team, orderNums } = req.body;
+    if (!team) return res.status(400).json({ error: 'team is required' });
+    if (!Array.isArray(orderNums) || orderNums.length === 0) {
+      return res.status(400).json({ error: 'orderNums (array) is required' });
+    }
+
+    const userDownloadPath = await getUserDownloadPath(req);
+    const requests = orderNums.map(orderNum => ({ orderNum, teams: [team] }));
+    const result = await schedulerService.processBatchByTeam(requests, {
+      batchLabel: team,
+      userDownloadPath,
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Process ALL teams in a gallery batch as one team-grouped print run.
+// Body: { orderNums: ['BK1', 'BK2', ...] } — caller passes the full set of orders to process
+router.post('/process-gallery-by-team', async (req, res) => {
+  try {
+    const { orderNums } = req.body;
+    if (!Array.isArray(orderNums) || orderNums.length === 0) {
+      return res.status(400).json({ error: 'orderNums (array) is required' });
+    }
+
+    const userDownloadPath = await getUserDownloadPath(req);
+    const requests = orderNums.map(orderNum => ({ orderNum, teams: null }));
+    const result = await schedulerService.processBatchByTeam(requests, {
+      batchLabel: 'AllTeams',
+      userDownloadPath,
+    });
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -408,6 +495,98 @@ router.post('/process-all', async (req, res) => {
 });
 
 // ─── REPRINT SINGLE ITEM ──────────────────────────────────
+// ─── BULK ORDER: LIST DANCERS ─────────────────────────────────
+// Returns the dancer breakdown for a bulk order so the UI can render
+// expandable per-dancer rows.
+//
+// Response:
+//   { orderNum, totalDancers, totalItems, dancers: [
+//       {
+//         dancerKey, dancerNum, firstName, lastName,
+//         itemCount, customerOrderNums, items: [
+//           { id, externalId, description, quantity, imageCount }
+//         ]
+//       }
+//   ]}
+router.get('/:orderNum/dancers', async (req, res) => {
+  try {
+    const { orderNum } = req.params;
+    const localOrder = await orderDatabase.getOrder(orderNum);
+    if (!localOrder) return res.status(404).json({ error: 'Order not found' });
+    if (!localOrder.orderData?.isBulkOrder) {
+      return res.status(400).json({ error: `Order ${orderNum} is not a bulk order` });
+    }
+
+    const dancers = bulkOrderService.listDancers(localOrder.orderData);
+    const dancerSummary = dancers.map(d => ({
+      dancerKey: d.dancerKey,
+      dancerNum: d.dancerNum,
+      firstName: d.firstName,
+      lastName: d.lastName,
+      itemCount: d.items.length,
+      customerOrderNums: d.customerOrderNums,
+      items: d.items.map(i => ({
+        id: i.id,
+        externalId: i.externalId,
+        description: i.description,
+        quantity: i.quantity || 1,
+        imageCount: (i.images || []).length,
+      })),
+    }));
+
+    res.json({
+      orderNum,
+      totalDancers: dancers.length,
+      totalItems: dancers.reduce((sum, d) => sum + d.items.length, 0),
+      dancers: dancerSummary,
+    });
+  } catch (error) {
+    console.error('[Routes] /dancers error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── BULK ORDER: REPRINT WHOLE DANCER ─────────────────────────
+// Re-fetches fresh assets from PhotoDay, re-imposes, generates a new slip
+// and Darkroom txt for one dancer's full order. Output goes to today's date
+// folder per the user's download path setting.
+router.post('/:orderNum/dancers/:dancerKey/reprint', async (req, res) => {
+  try {
+    const userDownloadPath = await getUserDownloadPath(req);
+    const { orderNum, dancerKey } = req.params;
+    const result = await schedulerService.reprintBulkDancer(orderNum, dancerKey, {
+      ...req.body,
+      userDownloadPath,
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[Routes] /dancers/:dancerKey/reprint error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── BULK ORDER: REPRINT SINGLE ITEM FOR A DANCER ─────────────
+// Same flow as whole-dancer reprint but restricted to one item. Matches the
+// existing /reprint-item behavior: no packing slip generated.
+router.post('/:orderNum/dancers/:dancerKey/reprint-item', async (req, res) => {
+  try {
+    const userDownloadPath = await getUserDownloadPath(req);
+    const { orderNum, dancerKey } = req.params;
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'Item ID required' });
+
+    const result = await schedulerService.reprintBulkDancer(orderNum, dancerKey, {
+      ...req.body,
+      itemId,
+      userDownloadPath,
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[Routes] /dancers/:dancerKey/reprint-item error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post('/:orderNum/reprint-item', async (req, res) => {
   try {
     const { orderNum } = req.params;
@@ -449,11 +628,7 @@ router.post('/:orderNum/reprint-item', async (req, res) => {
 
     // Use today's date folder for reprints (not the original order's download path)
     const fileService = require('../services/fileService');
-    const userDownloadPath = await getUserDownloadPath(req);
-    const orderDir = await fileService.getOrderDir(
-      orderData,
-      userDownloadPath ? { downloadPath: userDownloadPath } : {}
-    );
+    const orderDir = await fileService.getOrderDir(orderData);
     await fs.ensureDir(orderDir);
 
     console.log(`[Reprint] Starting reprint for ${orderNum} item: ${item.description} (externalId: ${item.externalId})`);

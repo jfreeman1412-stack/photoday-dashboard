@@ -90,6 +90,15 @@ class PackagingService {
         // Weight in oz of the 5x8 packing slip included with every order.
         // Default 0.4oz (typical 250gsm photo paper). Adjust if you use heavier/lighter stock.
         packingSlipWeightOz: 0.4,
+
+        // Default position of the per-order packing slip in the Darkroom txt:
+        //   'first' — slip prints before the order's items (current default; useful as
+        //             a job-separator when each customer's order prints sequentially)
+        //   'last'  — slip prints after the order's items (useful for team-batch flows
+        //             where a stack of items is gathered and the slip becomes the
+        //             top-of-stack identifier when the operator picks up the pile)
+        // Per-gallery settings can override this via gallerySettings.packingSlipPosition.
+        packingSlipPosition: 'first',
       };
 
       fs.writeJsonSync(CONFIG_PATH, defaultConfig, { spaces: 2 });
@@ -131,6 +140,11 @@ class PackagingService {
     }
     if (!Array.isArray(config.boxRouteSKUs)) {
       config.boxRouteSKUs = [];
+      dirty = true;
+    }
+    // Default packingSlipPosition to 'first' on existing configs missing the field
+    if (config.packingSlipPosition === undefined) {
+      config.packingSlipPosition = 'first';
       dirty = true;
     }
 

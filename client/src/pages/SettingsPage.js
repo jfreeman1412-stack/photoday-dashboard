@@ -1966,7 +1966,35 @@ export default function SettingsPage({ user }) {
             })()}
           </div>
 
-          {/* Framed Pano SKUs */}
+          {/* Packing Slip Position */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3>Packing Slip Position</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Where the per-order packing slip prints in the Darkroom txt. <strong>First</strong> means the slip prints before the order's items (useful as a job separator). <strong>Last</strong> means it prints after the items (useful for team-batch flows where the slip ends up on top of the customer's stack). Galleries can override this individually.
+            </p>
+            {packagingConfig && (
+              <div className="form-group" style={{ marginBottom: 0, maxWidth: 240 }}>
+                <label className="form-label" style={{ fontSize: 13 }}>Global default</label>
+                <select
+                  className="form-input"
+                  value={packagingConfig.packingSlipPosition || 'first'}
+                  onChange={async (e) => {
+                    const newPos = e.target.value;
+                    try {
+                      await api._fetch('/settings/packaging', {
+                        method: 'PUT',
+                        body: JSON.stringify({ packingSlipPosition: newPos }),
+                      });
+                      loadPackaging();
+                    } catch (err) { setError(err.message); }
+                  }}
+                >
+                  <option value="first">First — slip before items</option>
+                  <option value="last">Last — slip after items</option>
+                </select>
+              </div>
+            )}
+          </div>
           <div className="card" style={{ marginBottom: 20 }}>
             <h3>Framed Pano SKUs</h3>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>

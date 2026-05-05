@@ -185,6 +185,82 @@ class OrderDatabase {
   }
 
   /**
+   * Mark a subset of items as processed within an order, and update the order's
+   * status accordingly:
+   *   - If all items are now processed → status = 'processed'
+   *   - Otherwise → status = 'partially_processed'
+   *
+   * Returns { allItemsProcessed, processedCount, totalCount, newStatus }.
+   *
+   * @param {string} orderNum
+   * @param {string[]} itemUuids - UUIDs of items to mark as processed (item.id from PDX)
+   */
+  async markItemsProcessed(orderNum, itemUuids = []) {
+    const order = this.db.prepare('SELECT * FROM orders WHERE order_num = ?').get(orderNum);
+    if (!order) throw new Error(`Order ${orderNum} not found`);
+
+    if (itemUuids.length > 0) {
+      const placeholders = itemUuids.map(() => '?').join(',');
+      this.db.prepare(`
+        UPDATE order_items
+        SET processed = 1, processed_at = datetime('now')
+        WHERE order_num = ? AND item_uuid IN (${placeholders})
+      `).run(orderNum, ...itemUuids);
+    }
+
+    // Determine new status from current item state
+    const counts = this.db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN processed = 1 THEN 1 ELSE 0 END) as processed_count
+      FROM order_items
+      WHERE order_num = ?
+    `).get(orderNum);
+
+    const total = counts.total || 0;
+    const processedCount = counts.processed_count || 0;
+    const allItemsProcessed = total > 0 && processedCount >= total;
+    const newStatus = allItemsProcessed ? 'processed' : (processedCount > 0 ? 'partially_processed' : order.status);
+
+    if (newStatus !== order.status) {
+      const updates = { status: newStatus };
+      if (newStatus === 'processed') updates.processedAt = new Date().toISOString();
+      await this.updateOrder(orderNum, updates);
+    }
+
+    return {
+      allItemsProcessed,
+      processedCount,
+      totalCount: total,
+      newStatus,
+    };
+  }
+
+  /**
+   * Get the items of an order, optionally filtered by team tag.
+   * Returns array of item objects (id = item_uuid, plus tags, processed, etc.)
+   */
+  async getOrderItems(orderNum, { team = null, unprocessedOnly = false } = {}) {
+    const items = this.db.prepare('SELECT * FROM order_items WHERE order_num = ?').all(orderNum);
+    return items
+      .map(item => ({
+        id: item.item_uuid,
+        description: item.description,
+        externalId: item.external_id,
+        quantity: item.quantity,
+        imageCount: item.image_count,
+        tags: JSON.parse(item.tags || '[]'),
+        processed: !!item.processed,
+        processedAt: item.processed_at,
+      }))
+      .filter(item => {
+        if (unprocessedOnly && item.processed) return false;
+        if (team && !(item.tags || []).includes(team)) return false;
+        return true;
+      });
+  }
+
+  /**
    * Mark order as shipped.
    */
   async markShipped(orderNum, carrier, trackingNumber, metadata = {}) {

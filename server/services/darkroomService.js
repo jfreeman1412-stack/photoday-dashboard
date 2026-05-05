@@ -297,17 +297,27 @@ class DarkroomService {
    * image), then write the txt to a `.tmp` filename and atomically rename it
    * to the final `.txt` name. Darkroom never sees a partial txt or a txt
    * that references unflushed images.
+   *
+   * @param {object} orderData - { firstName, lastName, email, orderNum, lineItems }
+   * @param {string} outputDir
+   * @param {string} filenameSuffix - inserted before extension (legacy)
+   * @param {string} batchFilename - if provided, OVERRIDES the entire filename
+   *                                  (used by team-batch flow for predictable sort order)
    */
-  async writeTxtFile(orderData, outputDir, filenameSuffix = '') {
+  async writeTxtFile(orderData, outputDir, filenameSuffix = '', batchFilename = null) {
     const dir = outputDir || config.paths.txtOutput;
     await fs.ensureDir(dir);
 
-    let filename = await this.generateFileName(orderData);
-    if (filenameSuffix) {
-      // Insert suffix before the extension
-      const ext = path.extname(filename);
-      const base = filename.slice(0, -ext.length);
-      filename = `${base}${filenameSuffix}${ext}`;
+    let filename;
+    if (batchFilename) {
+      filename = batchFilename.endsWith('.txt') ? batchFilename : `${batchFilename}.txt`;
+    } else {
+      filename = await this.generateFileName(orderData);
+      if (filenameSuffix) {
+        const ext = path.extname(filename);
+        const base = filename.slice(0, -ext.length);
+        filename = `${base}${filenameSuffix}${ext}`;
+      }
     }
 
     const filePath = path.join(dir, filename);
@@ -364,24 +374,43 @@ class DarkroomService {
    */
   async processOrder(order, options = {}) {
     console.log(`[Darkroom] Processing order ${order.num}...`);
-    const customerName = photodayService.getCustomerName(order);
+    // Customer name resolution:
+    //   1. options.customerNameOverride { firstName, lastName }  — explicit override.
+    //      Used by the Bulk per-dancer flow so each dancer's txt has their own
+    //      "LastName, FirstName" Customer field instead of the studio's name.
+    //   2. photodayService.getCustomerName(order) — default for dropship and any
+    //      caller that doesn't supply an override.
+    const customerName = (options.customerNameOverride
+      && typeof options.customerNameOverride === 'object'
+      && (options.customerNameOverride.firstName != null
+          || options.customerNameOverride.lastName != null))
+      ? {
+          firstName: options.customerNameOverride.firstName || '',
+          lastName: options.customerNameOverride.lastName || '',
+        }
+      : photodayService.getCustomerName(order);
     console.log(`[Darkroom] Customer: ${customerName.firstName} ${customerName.lastName}`);
 
     const orderDir = options.orderDir || path.join(config.paths.downloadBase, order.num);
     console.log(`[Darkroom] OrderDir: ${orderDir}`);
 
-    const lineItems = [];
+    // Slip position: 'first' (default) or 'last'. With Darkroom's size-grouping
+    // behavior (it groups all line items by size and prints them in the order they
+    // appear in the txt), this controls slip placement WITHIN the 5x8 group:
+    //   'first' — slip is the first 5x8 line item printed (bottom of the 5x8 stack)
+    //   'last'  — slip is the last 5x8 line item printed (top of the 5x8 stack)
+    // In both cases, all 5x8 items are placed at the END of the txt so the 5x8
+    // size group is the LAST size Darkroom prints. This puts the slip on top of
+    // the customer's pile when slipPosition='last', which is the team-batch use case.
+    const slipPosition = options.slipPosition === 'last' ? 'last' : 'first';
 
-    // Packing slip as the FIRST print item (5x8)
-    if (options.packingSlipPath) {
-      lineItems.push({
-        qty: 1,
-        size: '5x8',
-        templatePath: null,
-        filePath: options.packingSlipPath,
-      });
-      console.log(`[Darkroom] Added packing slip: ${options.packingSlipPath}`);
-    }
+    // Build raw line items first (slip handled separately below so we can sort it)
+    const rawLineItems = [];
+
+    // Helper to append the slip when needed
+    const slipLineItem = options.packingSlipPath
+      ? { qty: 1, size: '5x8', templatePath: null, filePath: options.packingSlipPath }
+      : null;
 
     // Process each order item
     for (const item of order.items || []) {
@@ -415,7 +444,7 @@ class DarkroomService {
 
       for (const image of item.images || []) {
         const imagePath = path.join(orderDir, image.filename || `${image.id}.jpg`);
-        lineItems.push({
+        rawLineItems.push({
           qty: item.quantity || 1,
           size,
           templatePath,
@@ -424,7 +453,27 @@ class DarkroomService {
       }
     }
 
-    console.log(`[Darkroom] Total line items: ${lineItems.length}`);
+    // ─── Sort: non-5x8 first, then all 5x8 items, with slip placed within 5x8 group ───
+    // Darkroom prints sizes in the order their first occurrence appears in the txt,
+    // so putting all 5x8 lines at the bottom means the 5x8 group prints last.
+    const non5x8 = rawLineItems.filter(li => li.size !== '5x8');
+    const items5x8 = rawLineItems.filter(li => li.size === '5x8');
+    const lineItems = [...non5x8];
+
+    if (slipLineItem && slipPosition === 'first') {
+      // Slip first within 5x8 group → first 5x8 printed → bottom of customer's stack
+      lineItems.push(slipLineItem, ...items5x8);
+      console.log(`[Darkroom] Added packing slip (first within 5x8 group): ${options.packingSlipPath}`);
+    } else if (slipLineItem && slipPosition === 'last') {
+      // Slip last within 5x8 group → last 5x8 printed → top of customer's stack
+      lineItems.push(...items5x8, slipLineItem);
+      console.log(`[Darkroom] Added packing slip (last within 5x8 group): ${options.packingSlipPath}`);
+    } else {
+      // No slip
+      lineItems.push(...items5x8);
+    }
+
+    console.log(`[Darkroom] Total line items: ${lineItems.length} (non-5x8: ${non5x8.length}, 5x8: ${items5x8.length}${slipLineItem ? ' + slip' : ''})`);
 
     const orderData = {
       firstName: customerName.firstName,
@@ -437,7 +486,7 @@ class DarkroomService {
 
     console.log(`[Darkroom] Writing txt file...`);
     const suffix = options.filenameSuffix || '';
-    const result = await this.writeTxtFile(orderData, orderDir, suffix);
+    const result = await this.writeTxtFile(orderData, orderDir, suffix, options.batchFilename);
     console.log(`[Darkroom] Txt file written: ${result.filePath}`);
 
     return {
@@ -445,6 +494,50 @@ class DarkroomService {
       orderData,
       itemCount: lineItems.length,
     };
+  }
+
+
+  /**
+   * Write a standalone "team divider" txt — just a single 5x8 line item pointing
+   * at the divider image. Uses the same atomic .tmp + rename pattern as regular
+   * txts. The header block uses a synthetic customer name so Darkroom logs it
+   * recognizably without requiring real customer info.
+   *
+   * @param {string} dividerImagePath - path to the team-divider JPG
+   * @param {string} outputDir
+   * @param {string} batchFilename - full filename (with or without .txt extension)
+   * @param {string} teamName - human-readable team label, used in the synthetic header
+   */
+  async writeDividerTxt(dividerImagePath, outputDir, batchFilename, teamName) {
+    await fs.ensureDir(outputDir);
+
+    const filename = batchFilename.endsWith('.txt') ? batchFilename : `${batchFilename}.txt`;
+    const filePath = path.join(outputDir, filename);
+    const tmpPath = filePath + '.tmp';
+
+    // Wait for the divider image to be stable before referencing it
+    const stab = await this._waitForFilesStable([dividerImagePath], {
+      timeoutMs: 30000, pollIntervalMs: 250, warnAfterMs: 5000,
+    });
+    if (!stab.stable) {
+      throw new Error(`Divider image not stable after ${stab.elapsedMs}ms`);
+    }
+
+    const lines = [
+      `OrderFirstName=TEAM`,
+      `OrderLastName=${teamName || 'DIVIDER'}`,
+      `OrderEmail=`,
+      `ExtOrderNum=DIVIDER_${teamName || ''}`.replace(/\s+/g, '_'),
+      `Qty=1`,
+      `Size=5x8`,
+      `Filepath=${dividerImagePath}`,
+    ];
+
+    await fs.writeFile(tmpPath, lines.join('\n'), 'utf-8');
+    await fs.rename(tmpPath, filePath);
+
+    console.log(`[Darkroom] Team divider txt written: ${filePath}`);
+    return { filePath, filename };
   }
 
 }

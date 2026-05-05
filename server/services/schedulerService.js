@@ -5,6 +5,10 @@ const fileService = require('./fileService');
 const darkroomService = require('./darkroomService');
 const impositionService = require('./impositionService');
 const packingSlipService = require('./packingSlipService');
+const teamDividerService = require('./teamDividerService');
+const packagingService = require('./packagingService');
+const bulkOrderService = require('./bulkOrderService');
+const fs = require('fs-extra');
 
 class SchedulerService {
   constructor() {
@@ -115,7 +119,11 @@ class SchedulerService {
           if (shouldAutoProcess) {
             console.log(`[Scheduler] Auto-processing ${order.num} from "${order.gallery}"`);
             try {
-              await this.processOrder(order.num, { autoProcess: true });
+              if (order.isBulkOrder) {
+                await this.processBulkOrder(order.num, { autoProcess: true });
+              } else {
+                await this.processOrder(order.num, { autoProcess: true });
+              }
               autoProcessed.push(order.num);
               console.log(`[Scheduler] Auto-processed ${order.num} successfully`);
             } catch (apErr) {
@@ -285,7 +293,9 @@ class SchedulerService {
       throw new Error(`Order ${orderNum} is already ${localOrder.status}`);
     }
 
-    const order = localOrder.orderData;
+    // `order` is mutable: if the download step refreshes asset URLs from PhotoDay,
+    // the rest of this method should operate on the freshly fetched order data.
+    let order = localOrder.orderData;
 
     // Log asset URLs being used
     for (const item of order.items || []) {
@@ -294,29 +304,34 @@ class SchedulerService {
       }
     }
 
-    // 1. Download images
+    // 1. Download images (with auto-refresh of expired asset URLs from PhotoDay)
     let downloadResult;
+    let workingOrder = order;
     try {
-      downloadResult = await fileService.downloadOrderImages(order, options);
-      
-      // If any images failed to download, abort processing
-      // Leave the order as unprocessed so the next fetch cycle refreshes URLs
+      const dlOptions = {
+        ...options,
+        downloadPath: options.userDownloadPath || options.downloadPath,
+      };
+      const dl = await this._downloadWithRefresh(order, dlOptions, localOrder.status);
+      downloadResult = dl.downloadResult;
+      workingOrder = dl.freshOrder;
+
+      // If still failing after the refresh attempt (or refresh wasn't possible), abort
       if (downloadResult.errorCount > 0) {
         const failedFiles = downloadResult.errors?.map(e => e.filename).join(', ') || 'unknown';
-        console.error(`[Scheduler] ${downloadResult.errorCount} image(s) failed to download for ${orderNum}: ${failedFiles}`);
-        console.error(`[Scheduler] Aborting processing for ${orderNum} — order stays unprocessed, URLs will refresh on next fetch`);
-        
-        // If we have SOME images from a previous download, note that
+        console.error(`[Scheduler] ${downloadResult.errorCount} image(s) still failed for ${orderNum} after refresh attempt: ${failedFiles}`);
+        console.error(`[Scheduler] Aborting processing for ${orderNum} — order stays unprocessed, will retry on next fetch`);
+
         if (downloadResult.successCount > 0) {
           console.log(`[Scheduler] ${downloadResult.successCount} image(s) downloaded successfully, but all images are required`);
         }
-        
-        throw new Error(`Failed to download ${downloadResult.errorCount} of ${downloadResult.totalImages} images — asset URLs may have expired. Order will retry on next fetch.`);
+
+        throw new Error(`Failed to download ${downloadResult.errorCount} of ${downloadResult.totalImages} images — asset URLs may have expired and refresh did not resolve them. Order will retry on next fetch.`);
       }
     } catch (dlError) {
       // If it's our abort error, re-throw it
       if (dlError.message.includes('Failed to download')) throw dlError;
-      
+
       console.error(`[Scheduler] Download error for ${orderNum}: ${dlError.message}`);
       if (localOrder.downloadPath) {
         console.log(`[Scheduler] Falling back to previous download path: ${localOrder.downloadPath}`);
@@ -325,6 +340,9 @@ class SchedulerService {
         throw dlError;
       }
     }
+
+    // If a URL refresh happened, work with the fresh order data from here on
+    order = workingOrder;
 
     // 2. Apply imposition rules (e.g., 8 wallets on 8x10 sheet)
     //    This replaces original images with composed sheets where applicable
@@ -349,16 +367,18 @@ class SchedulerService {
       packingSlipResult = { error: psError.message };
     }
 
-    // 4. Generate Darkroom txt (packing slip is first print item at 5x8)
+    // 4. Generate Darkroom txt (slip placement: 'first' or 'last' from gallery/global setting)
     let txtResult = null;
     try {
       console.log(`[Scheduler] Starting Darkroom txt for ${orderNum}, orderDir: ${downloadResult.orderDir}`);
+      const slipPosition = await this._resolveSlipPosition(order.gallery);
       txtResult = await darkroomService.processOrder(order, {
         ...options,
         orderDir: downloadResult.orderDir,
         packingSlipPath: packingSlipResult?.filePath || null,
+        slipPosition,
       });
-      console.log(`[Scheduler] Darkroom txt generated for ${orderNum}: ${txtResult.filePath}`);
+      console.log(`[Scheduler] Darkroom txt generated for ${orderNum}: ${txtResult.filePath} (slipPosition=${slipPosition})`);
     } catch (txtError) {
       console.error(`[Scheduler] Darkroom txt error for ${orderNum}:`, txtError.message, txtError.stack);
       txtResult = { error: txtError.message };
@@ -470,7 +490,10 @@ class SchedulerService {
 
     for (const localOrder of unprocessed) {
       try {
-        const result = await this.processOrder(localOrder.orderNum, options);
+        const isBulk = !!localOrder?.orderData?.isBulkOrder;
+        const result = isBulk
+          ? await this.processBulkOrder(localOrder.orderNum, options)
+          : await this.processOrder(localOrder.orderNum, options);
         results.push({ orderNum: localOrder.orderNum, success: true, ...result });
       } catch (err) {
         results.push({ orderNum: localOrder.orderNum, success: false, error: err.message });
@@ -501,6 +524,701 @@ class SchedulerService {
       return { teamEnabled: false, autoProcess: false, folderSort: null };
     }
   }
+
+  /**
+   * Process a batch of orders, grouped by team. For each order in the batch:
+   *   - Filter the order's items by team(s) — only those items are processed in this run
+   *   - Download images, run imposition, generate per-team packing slips
+   *   - Mark the processed items in the local DB; if all items are now done, mark
+   *     the order processed and ping PhotoDay
+   * Then write ONE batch Darkroom txt with team-divider sheets between teams.
+   *
+   * @param {Array<{ orderNum, teams }>} requests
+   *   Each entry: { orderNum, teams: [team1, team2, ...] } — the teams to process for this order.
+   *   To process ALL teams in an order, pass teams: null or 'all'.
+   * @param {object} options - { batchLabel: 'TeamA' | 'AllTeams' | ... }
+   * @returns {Promise<{ batchTxt, ordersProcessed, teamsProcessed, errors }>}
+   */
+  async processBatchByTeam(requests, options = {}) {
+    if (!Array.isArray(requests) || requests.length === 0) {
+      throw new Error('No orders requested for batch processing');
+    }
+
+    // Group output bucket: team → [{ orderData, items, packingSlipPath, orderDir }]
+    const teamGroups = new Map();
+    const errors = [];
+    const fullyProcessedOrders = []; // track for PhotoDay marking
+    let firstGallery = '';
+
+    for (const req of requests) {
+      const orderNum = req.orderNum;
+      try {
+        const localOrder = await orderDatabase.getOrder(orderNum);
+        if (!localOrder) {
+          errors.push({ orderNum, error: 'Order not found in local DB' });
+          continue;
+        }
+
+        // Refuse if Skip ShipStation isn't enabled for this gallery (team batches
+        // need hand-delivery semantics; per-team labels aren't implemented yet).
+        const gallerySettings = await this._getGalleryConfig(localOrder.gallery);
+        if (!gallerySettings.skipShipStation) {
+          errors.push({
+            orderNum,
+            error: `Team processing requires "Skip ShipStation" to be enabled for gallery "${localOrder.gallery}". Enable it in the gallery settings before running team batches.`,
+          });
+          continue;
+        }
+        if (!firstGallery) firstGallery = localOrder.gallery;
+
+        // `order` is mutable: if download refreshes asset URLs from PhotoDay,
+        // subsequent steps should operate on the fresh data.
+        let order = localOrder.orderData;
+
+        // Determine which teams' items we're processing this run
+        const requestedTeams = (req.teams === null || req.teams === 'all' || !req.teams)
+          ? this._collectTeamsFromOrder(order)
+          : (Array.isArray(req.teams) ? req.teams : [req.teams]);
+
+        if (requestedTeams.length === 0) {
+          errors.push({ orderNum, error: 'No teams found on this order' });
+          continue;
+        }
+
+        // Items unprocessed AND in any of the requested teams
+        const allItems = await orderDatabase.getOrderItems(orderNum, { unprocessedOnly: true });
+        const itemsForThisRun = allItems.filter(it =>
+          (it.tags || []).some(t => requestedTeams.includes(t))
+        );
+
+        if (itemsForThisRun.length === 0) {
+          console.log(`[Scheduler] No unprocessed items for ${orderNum} matching teams [${requestedTeams.join(', ')}] — skipping`);
+          continue;
+        }
+
+        // ─── Download all images for this order ────────────
+        // We download ALL the order's images (not just team-filtered) because images
+        // can be referenced by multiple items. Imposition will only run on team items
+        // and the txt will only reference team items. If asset URLs have expired,
+        // _downloadWithRefresh will pull fresh URLs from PhotoDay and retry once.
+        const dlOptions = options.userDownloadPath ? { downloadPath: options.userDownloadPath } : {};
+        const dl = await this._downloadWithRefresh(order, dlOptions, localOrder.status);
+        const downloadResult = dl.downloadResult;
+        order = dl.freshOrder; // use refreshed data if a refresh happened
+        if (downloadResult.errorCount > 0) {
+          throw new Error(`Failed to download ${downloadResult.errorCount} of ${downloadResult.totalImages} images${dl.freshOrder !== localOrder.orderData ? ' even after URL refresh' : ''}`);
+        }
+
+        // ─── Imposition for team items only ───────────────
+        // Build a synthetic order with only the items this run cares about,
+        // then run imposition on it. Imposition operates on file paths in orderDir
+        // so the synthetic order shares the real orderDir.
+        const teamItemUuids = new Set(itemsForThisRun.map(it => it.id));
+        const fullItemObjects = (order.items || []).filter(i => teamItemUuids.has(i.id));
+        const syntheticOrder = { ...order, items: fullItemObjects };
+        try {
+          const impResults = await impositionService.processOrder(syntheticOrder, downloadResult.orderDir);
+          const imposedCount = impResults.filter(r => r.imposed).length;
+          if (imposedCount > 0) {
+            console.log(`[Scheduler] Imposition: ${imposedCount} item(s) composed for ${orderNum} (team subset)`);
+          }
+        } catch (impErr) {
+          console.error(`[Scheduler] Imposition error for ${orderNum}: ${impErr.message}`);
+        }
+
+        // ─── Group team items by team for output bucketing ───
+        // A single item can belong to multiple teams technically, but in practice
+        // each player-tagged item has one team. We bucket by the FIRST matching
+        // requested team to keep output clean.
+        const itemsByTeam = new Map();
+        for (const item of fullItemObjects) {
+          const itemTags = (await orderDatabase.getOrderItems(orderNum)).find(i => i.id === item.id)?.tags || [];
+          const matchedTeam = requestedTeams.find(t => itemTags.includes(t));
+          if (!matchedTeam) continue;
+          if (!itemsByTeam.has(matchedTeam)) itemsByTeam.set(matchedTeam, []);
+          itemsByTeam.get(matchedTeam).push(item);
+        }
+
+        // ─── Per-team: generate packing slip, add to team group ───
+        for (const [teamName, teamItems] of itemsByTeam.entries()) {
+          const teamItemIds = teamItems.map(i => i.id);
+          let packingSlipPath = null;
+          try {
+            const ps = await packingSlipService.generateSlip(order, downloadResult.orderDir, {
+              team: teamName,
+              teamItems: teamItemIds,
+            });
+            packingSlipPath = ps.filePath;
+          } catch (psErr) {
+            console.error(`[Scheduler] Packing slip error for ${orderNum} team ${teamName}: ${psErr.message}`);
+          }
+
+          if (!teamGroups.has(teamName)) {
+            teamGroups.set(teamName, { team: teamName, gallery: localOrder.gallery, orders: [] });
+          }
+          teamGroups.get(teamName).orders.push({
+            orderNum,
+            orderData: order,
+            items: teamItems,
+            packingSlipPath,
+            orderDir: downloadResult.orderDir,
+          });
+        }
+
+        // ─── Mark these items processed in DB; resolve order status ──
+        const result = await orderDatabase.markItemsProcessed(orderNum, [...teamItemUuids]);
+        console.log(`[Scheduler] Marked ${teamItemUuids.size} items processed for ${orderNum} → status=${result.newStatus} (${result.processedCount}/${result.totalCount})`);
+
+        if (result.allItemsProcessed) {
+          fullyProcessedOrders.push({ orderNum, downloadPath: downloadResult.orderDir });
+        }
+
+      } catch (err) {
+        console.error(`[Scheduler] Error processing ${orderNum}:`, err.message, err.stack);
+        errors.push({ orderNum, error: err.message });
+      }
+    }
+
+    // ─── Write per-order batch txts (one per team-order pair) ──────────
+    if (teamGroups.size === 0) {
+      return { batchFiles: [], ordersProcessed: 0, teamsProcessed: 0, errors };
+    }
+
+    // Sort teams alphabetically for deterministic print order
+    const sortedGroups = [...teamGroups.values()].sort((a, b) => a.team.localeCompare(b.team));
+    const totalOrders = sortedGroups.reduce((n, g) => n + g.orders.length, 0);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const galleryLabel = this._safeName(firstGallery || 'Batch');
+
+    // Resolve slip position once per gallery (same setting for all orders in this batch)
+    const slipPosition = await this._resolveSlipPosition(firstGallery);
+
+    const batchFiles = [];
+
+    for (let teamIdx = 0; teamIdx < sortedGroups.length; teamIdx++) {
+      const group = sortedGroups[teamIdx];
+      const teamLabel = this._safeName(group.team);
+      // Numeric prefix ensures alphabetical sort = team print order (zero-padded so 10+ teams sort right)
+      const teamPrefix = String(teamIdx + 1).padStart(3, '0');
+      // outputDir for the team's divider — pick the first order in this team's orderDir
+      const teamOutputDir = group.orders[0]?.orderDir || (await this._defaultOutputDir());
+
+      for (const orderEntry of group.orders) {
+        // For each (team, order) pair, write a per-order Darkroom txt
+        // with the team-filtered items, packing slip, and batch-prefixed filename.
+        const order = orderEntry.orderData;
+        // Synthetic order with only this team's items so darkroomService writes the right things
+        const teamFilteredOrder = { ...order, items: orderEntry.items };
+        const batchFilename = `BATCH_${ts}_${galleryLabel}_${teamPrefix}-${teamLabel}_${orderEntry.orderNum}`;
+        try {
+          const txtResult = await darkroomService.processOrder(teamFilteredOrder, {
+            orderDir: orderEntry.orderDir,
+            packingSlipPath: orderEntry.packingSlipPath,
+            slipPosition,
+            batchFilename,
+          });
+          batchFiles.push(txtResult.filePath);
+          console.log(`[Scheduler] Batch txt: ${txtResult.filename}`);
+        } catch (txtErr) {
+          console.error(`[Scheduler] Batch txt error for ${orderEntry.orderNum} team ${group.team}: ${txtErr.message}`);
+          errors.push({ orderNum: orderEntry.orderNum, error: `Failed to write team batch txt: ${txtErr.message}` });
+        }
+      }
+
+      // Standalone team-divider txt at end of team's section.
+      // Filename uses 'zzzz' so it sorts after all order files within this team's prefix.
+      try {
+        const totalTeamItems = group.orders.reduce((n, o) => n + (o.items || []).length, 0);
+        const divider = await teamDividerService.generateDivider(group.team, teamOutputDir, {
+          customerCount: group.orders.length,
+          itemCount: totalTeamItems,
+          gallery: group.gallery || '',
+        });
+        const dividerFilename = `BATCH_${ts}_${galleryLabel}_${teamPrefix}-${teamLabel}_zzzz_DIVIDER`;
+        const dividerTxt = await darkroomService.writeDividerTxt(divider.filePath, teamOutputDir, dividerFilename, group.team);
+        batchFiles.push(dividerTxt.filePath);
+        console.log(`[Scheduler] Team divider txt: ${dividerTxt.filename}`);
+      } catch (divErr) {
+        console.error(`[Scheduler] Team divider error for ${group.team}: ${divErr.message}`);
+        errors.push({ team: group.team, error: `Failed to write team divider: ${divErr.message}` });
+      }
+    }
+
+    console.log(`[Scheduler] Batch processed: ${totalOrders} orders, ${sortedGroups.length} team(s), ${batchFiles.length} txt file(s) written, slipPosition=${slipPosition}`);
+
+    // ─── Mark fully-processed orders in PhotoDay ──────────
+    for (const { orderNum, downloadPath } of fullyProcessedOrders) {
+      try {
+        await photodayService.markAsProcessed(orderNum);
+        await orderDatabase.updateOrder(orderNum, { photodaySynced: true, downloadPath });
+      } catch (pdErr) {
+        console.warn(`[Scheduler] PhotoDay mark processed for ${orderNum}: ${pdErr.message}`);
+      }
+    }
+
+    return {
+      batchFiles,
+      batchFileCount: batchFiles.length,
+      ordersProcessed: totalOrders,
+      teamsProcessed: sortedGroups.length,
+      fullyProcessedCount: fullyProcessedOrders.length,
+      slipPosition,
+      errors,
+    };
+  }
+
+  /**
+   * Download an order's images, with one-shot auto-refresh of asset URLs from
+   * PhotoDay if any image returns a 403/expired error. PhotoDay's asset URLs are
+   * signed and rotate when the order is updated/resent, which is the most common
+   * cause of download failures here.
+   *
+   * On a refresh, the local DB record for this order is updated with the fresh
+   * orderData (URLs and any other field changes), and the caller can use the
+   * returned `freshOrder` to keep working with up-to-date data.
+   *
+   * @param {object} order - The order object whose items have asset URLs to download
+   * @param {object} dlOptions - Options forwarded to fileService.downloadOrderImages
+   * @param {string} statusForSave - Status to preserve when saving refreshed data (default 'unprocessed')
+   * @returns {Promise<{ downloadResult, freshOrder }>}
+   *   - downloadResult: same shape as fileService.downloadOrderImages
+   *   - freshOrder: the refreshed order if a refresh happened, else the original
+   */
+  async _downloadWithRefresh(order, dlOptions = {}, statusForSave = 'unprocessed') {
+    const orderNum = order.num;
+    let downloadResult = await fileService.downloadOrderImages(order, dlOptions);
+
+    if (downloadResult.errorCount === 0) {
+      return { downloadResult, freshOrder: order };
+    }
+
+    const failedFiles = downloadResult.errors?.map(e => e.filename).join(', ') || 'unknown';
+    const sample403 = (downloadResult.errors || []).find(e => /403|expired/i.test(e.error || ''));
+    console.warn(`[Scheduler] ${downloadResult.errorCount} image(s) failed for ${orderNum}: ${failedFiles}${sample403 ? ' (likely expired URLs)' : ''}`);
+    console.log(`[Scheduler] Attempting URL refresh from PhotoDay for ${orderNum}...`);
+
+    let freshOrder = null;
+    try {
+      const freshOrders = await photodayService.getOrders();
+      freshOrder = freshOrders.find(o => o.num === orderNum);
+    } catch (refreshErr) {
+      console.warn(`[Scheduler] URL refresh failed for ${orderNum}: ${refreshErr.message}`);
+    }
+
+    if (!freshOrder) {
+      console.warn(`[Scheduler] ${orderNum} not in PhotoDay's queue (already marked processed there?) — cannot refresh URLs`);
+      return { downloadResult, freshOrder: order };
+    }
+
+    console.log(`[Scheduler] Got fresh URLs for ${orderNum}; updating local DB and retrying download`);
+    await orderDatabase.saveOrder(freshOrder, statusForSave);
+    downloadResult = await fileService.downloadOrderImages(freshOrder, dlOptions);
+    return { downloadResult, freshOrder };
+  }
+
+  /**
+   * Resolve packing-slip position from gallery setting (if 'first' or 'last') falling back
+   * to global packaging config (default 'first').
+   */
+  async _resolveSlipPosition(gallery) {
+    try {
+      const galleryConfig = await this._getGalleryConfig(gallery);
+      if (galleryConfig?.packingSlipPosition === 'first' || galleryConfig?.packingSlipPosition === 'last') {
+        return galleryConfig.packingSlipPosition;
+      }
+    } catch {}
+    try {
+      const pkgConfig = await packagingService.getConfig();
+      if (pkgConfig?.packingSlipPosition === 'first' || pkgConfig?.packingSlipPosition === 'last') {
+        return pkgConfig.packingSlipPosition;
+      }
+    } catch {}
+    return 'first';
+  }
+
+  /**
+   * Collect all team tags from an order's items.
+   */
+  _collectTeamsFromOrder(order) {
+    const teams = new Set();
+    for (const item of order.items || []) {
+      const tags = item.photoTags || [];
+      for (const tag of tags) teams.add(tag);
+    }
+    return [...teams];
+  }
+
+  _safeName(s) {
+    return String(s || '').replace(/[<>:"/\\|?*\s]/g, '_').replace(/_+/g, '_').slice(0, 60);
+  }
+
+  async _defaultOutputDir() {
+    const config = require('../config');
+    return config.paths.txtOutput || config.paths.downloadBase;
+  }
+
+  /**
+   * Process a Bulk Shipping order — one PhotoDay order containing many groups
+   * (one group per dancer/athlete), all destined for a single studio shipment.
+   *
+   * Flow:
+   *   1. Bucket items by dancer (by group). Same-name dancers are merged.
+   *   2. Sort buckets alphabetically by last name (then first name).
+   *   3. For each dancer: download → impose → per-dancer slip with big athlete
+   *      name → per-dancer Darkroom txt with batch-prefixed filename for stack
+   *      ordering.
+   *   4. Skip ShipStation entirely (Bulk = pickup/drop-off).
+   *   5. Mark all items processed; mark order processed in DB and PhotoDay.
+   *
+   * @param {string} orderNum
+   * @param {object} options - { userDownloadPath, reprocess }
+   */
+  async processBulkOrder(orderNum, options = {}) {
+    const localOrder = await orderDatabase.getOrder(orderNum);
+    if (!localOrder) throw new Error(`Order ${orderNum} not found`);
+    if (localOrder.status !== 'unprocessed' && !options.reprocess) {
+      throw new Error(`Order ${orderNum} is already ${localOrder.status}`);
+    }
+
+    let order = localOrder.orderData;
+    if (!order.isBulkOrder) {
+      throw new Error(`Order ${orderNum} is not flagged as a Bulk order — use processOrder instead`);
+    }
+    if (!Array.isArray(order.groups) || order.groups.length === 0) {
+      throw new Error(`Bulk order ${orderNum} has no groups — cannot bucket by dancer`);
+    }
+
+    // ─── 1. Download images (with auto-refresh of expired URLs) ──────────
+    const dlOptions = {
+      ...options,
+      downloadPath: options.userDownloadPath || options.downloadPath,
+    };
+    const dl = await this._downloadWithRefresh(order, dlOptions, localOrder.status);
+    const downloadResult = dl.downloadResult;
+    order = dl.freshOrder;
+
+    if (downloadResult.errorCount > 0) {
+      throw new Error(`Failed to download ${downloadResult.errorCount} of ${downloadResult.totalImages} images for ${orderNum} — asset URLs may have expired and refresh did not resolve them.`);
+    }
+
+    // ─── 2. Run imposition for the WHOLE order ─────────────────────────
+    // Imposition's _buildContext is now group-aware, so each item's overlay
+    // gets the correct athlete name from its group.
+    try {
+      const impResults = await impositionService.processOrder(order, downloadResult.orderDir);
+      const imposedCount = impResults.filter(r => r.imposed).length;
+      if (imposedCount > 0) {
+        console.log(`[Scheduler-Bulk] Imposition: ${imposedCount} item(s) composed for ${orderNum}`);
+      }
+    } catch (impErr) {
+      console.error(`[Scheduler-Bulk] Imposition error for ${orderNum}: ${impErr.message}`);
+    }
+
+    // ─── 3. Bucket items by dancer ───────────────────────────────────────
+    // ─── 3. Bucket items by dancer (delegated to bulkOrderService) ──────
+    // bulkOrderService.listDancers handles bucketing, sorting, and dancerNum
+    // assignment. The same helper is used by the reprint flow so per-dancer
+    // numbering and merging behavior stay in lockstep across both paths.
+    const sortedDancers = bulkOrderService.listDancers(order);
+
+    // Warn about any items skipped (no matching group / no name)
+    const groupedItemIds = new Set(sortedDancers.flatMap(d => d.itemUuids));
+    for (const item of order.items || []) {
+      if (groupedItemIds.has(item.id)) continue;
+      const group = (order.groups || []).find(g => g.id === item.groupId);
+      if (!group) {
+        console.warn(`[Scheduler-Bulk] Item ${item.id} has groupId=${item.groupId} but no matching group — skipping`);
+      } else {
+        console.warn(`[Scheduler-Bulk] Group ${group.id} has no first_name/last_name — skipping item ${item.id}`);
+      }
+    }
+
+    if (sortedDancers.length === 0) {
+      throw new Error(`No dancers found in bulk order ${orderNum} — order has groups but no items mapped to them`);
+    }
+
+    console.log(`[Scheduler-Bulk] ${orderNum}: ${sortedDancers.length} dancer(s), ${(order.items || []).length} total items`);
+
+    // ─── 5. Resolve slip position once (gallery override > global > 'last' default for Bulk) ──
+    // For Bulk, 'last' is the operationally correct default since the slip ends up
+    // on top of each dancer's pile when the studio sorts the stack. We still honor
+    // explicit gallery/global overrides if set.
+    let slipPosition = await this._resolveSlipPosition(order.gallery);
+    // If neither gallery nor global is explicitly set, default to 'last' for Bulk
+    if (!slipPosition || slipPosition === 'first') {
+      // Check if it was explicitly set or just defaulted
+      const galleryConfig = await this._getGalleryConfig(order.gallery).catch(() => ({}));
+      const explicitGallerySetting = galleryConfig?.packingSlipPosition === 'first' || galleryConfig?.packingSlipPosition === 'last';
+      if (!explicitGallerySetting) {
+        slipPosition = 'last';
+      }
+    }
+
+    // ─── 6. Per-dancer processing: slip + Darkroom txt ───────────────────
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const galleryLabel = this._safeName(order.gallery || 'Bulk');
+    const batchFiles = [];
+
+    for (const dancer of sortedDancers) {
+      const result = await this._processOneDancer(order, dancer, {
+        orderDir: downloadResult.orderDir,
+        slipPosition,
+        batchFilenamePrefix: `BATCH_${ts}_${galleryLabel}`,
+      });
+      if (result.txtFilePath) batchFiles.push(result.txtFilePath);
+    }
+
+    // ─── 7. Mark all items processed ──────────────────────────────────────
+    const allItemUuids = (order.items || []).map(i => i.id).filter(Boolean);
+    const result = await orderDatabase.markItemsProcessed(orderNum, allItemUuids);
+    console.log(`[Scheduler-Bulk] Marked ${allItemUuids.length} items processed for ${orderNum} → status=${result.newStatus}`);
+
+    // ─── 8. PhotoDay: mark order processed (Bulk skips ShipStation entirely) ─
+    if (result.allItemsProcessed) {
+      try {
+        await photodayService.markAsProcessed(orderNum);
+        await orderDatabase.updateOrder(orderNum, { photodaySynced: true, downloadPath: downloadResult.orderDir });
+      } catch (pdErr) {
+        console.warn(`[Scheduler-Bulk] PhotoDay mark processed for ${orderNum}: ${pdErr.message}`);
+      }
+    }
+
+    return {
+      orderNum,
+      mode: 'bulk',
+      dancersProcessed: sortedDancers.length,
+      totalItems: allItemUuids.length,
+      batchFiles,
+      slipPosition,
+      shipstationSkipped: true,
+    };
+  }
+
+  /**
+   * Process one dancer's items: build sub-order → packing slip → Darkroom txt.
+   *
+   * Used by both processBulkOrder (initial batch) and reprintBulkDancer (reprint).
+   * Pure per-dancer concern — does NOT download images, run imposition, mark
+   * processed, or talk to PhotoDay. Caller is responsible for those.
+   *
+   * @param {object} order - Full PDX order (parent bulk order)
+   * @param {DancerBucket} dancer - From bulkOrderService.listDancers
+   * @param {object} options
+   * @param {string}  options.orderDir            - Where imposed images live; slip is also written here
+   * @param {string}  options.batchFilenamePrefix - Prefix for txt filename, e.g. "BATCH_<ts>_<gallery>"
+   *                                                  or "REPRINT_<ts>". Dancer suffix is appended.
+   * @param {string}  [options.slipPosition]      - 'first' | 'last' (forwarded to darkroomService)
+   * @param {boolean} [options.skipSlip]          - Skip slip generation (used by single-item reprints)
+   * @param {string}  [options.itemId]            - If set, restrict items to just this one
+   * @param {string}  [options.logPrefix]         - Log tag, defaults to '[Scheduler-Bulk]'
+   * @returns {Promise<{ txtFilePath: string|null, txtFilename: string|null,
+   *                     slipFilePath: string|null, dancerNum: string }>}
+   */
+  async _processOneDancer(order, dancer, options = {}) {
+    const logPrefix = options.logPrefix || '[Scheduler-Bulk]';
+    const { dancerNum } = dancer;
+    const safeLast = this._safeName(dancer.lastName || 'Unknown');
+    const safeFirst = this._safeName(dancer.firstName || '');
+
+    // Order num shown on slip: dancer's own when unambiguous, parent bulk num
+    // when this dancer's items came in under multiple sub-orders.
+    const dancerOrderNum = bulkOrderService.resolveDancerOrderNum(dancer, order.num);
+
+    // Synthetic sub-order: only this dancer's items + groups (and optionally
+    // restricted to one item for single-item reprints).
+    const subOrder = bulkOrderService.buildSubOrder(order, dancer, { itemId: options.itemId });
+
+    if (!subOrder.items || subOrder.items.length === 0) {
+      console.warn(`${logPrefix} No items to process for ${dancer.lastName}, ${dancer.firstName}${options.itemId ? ` (itemId=${options.itemId})` : ''}`);
+      return { txtFilePath: null, txtFilename: null, slipFilePath: null, dancerNum };
+    }
+
+    // Customer name as a single combined "LastName, FirstName" field — packed
+    // into firstName slot with empty lastName so Darkroom displays it as one
+    // label that sorts by last name. (See darkroomService customerNameOverride.)
+    const customerLine = (dancer.lastName && dancer.firstName)
+      ? `${dancer.lastName}, ${dancer.firstName}`
+      : (dancer.lastName || dancer.firstName || 'Unknown');
+    const customerNameOverride = { firstName: customerLine, lastName: '' };
+
+    // Packing slip — bulk-style "athlete name big" header. Filename is unique
+    // per-dancer so concurrent slip writes never overwrite each other.
+    let packingSlipPath = null;
+    if (!options.skipSlip) {
+      const slipFilename = `${dancerNum}_${safeLast}_${safeFirst}_packing_slip.jpg`;
+      try {
+        const ps = await packingSlipService.generateSlip(subOrder, options.orderDir, {
+          athlete: {
+            firstName: dancer.firstName,
+            lastName: dancer.lastName,
+            customerOrderNum: dancerOrderNum,
+          },
+          filenameOverride: slipFilename,
+        });
+        packingSlipPath = ps.filePath;
+      } catch (psErr) {
+        console.error(`${logPrefix} Packing slip error for ${dancer.lastName}, ${dancer.firstName}: ${psErr.message}`);
+      }
+
+      // Verify slip is on disk before referencing it from a Darkroom txt.
+      if (packingSlipPath) {
+        try {
+          const exists = await fs.pathExists(packingSlipPath);
+          if (!exists) {
+            console.error(`${logPrefix} Slip path missing on disk for ${dancer.lastName}, ${dancer.firstName}: ${packingSlipPath} — skipping txt generation`);
+            return { txtFilePath: null, txtFilename: null, slipFilePath: null, dancerNum };
+          }
+        } catch (existsErr) {
+          console.error(`${logPrefix} Slip existence check failed for ${dancer.lastName}, ${dancer.firstName}: ${existsErr.message}`);
+          return { txtFilePath: null, txtFilename: null, slipFilePath: null, dancerNum };
+        }
+      }
+    }
+
+    // Darkroom txt
+    const itemSuffix = options.itemId ? `_item_${options.itemId.slice(0, 8)}` : '';
+    const batchFilename = `${options.batchFilenamePrefix}_${dancerNum}-${safeLast}_${safeFirst}${itemSuffix}`;
+    try {
+      const txtResult = await darkroomService.processOrder(subOrder, {
+        orderDir: options.orderDir,
+        packingSlipPath,
+        slipPosition: options.slipPosition,
+        batchFilename,
+        customerNameOverride,
+      });
+      console.log(`${logPrefix} Dancer ${dancerNum} ${dancer.lastName}, ${dancer.firstName} (${subOrder.items.length} items): ${txtResult.filename}`);
+      return {
+        txtFilePath: txtResult.filePath,
+        txtFilename: txtResult.filename,
+        slipFilePath: packingSlipPath,
+        dancerNum,
+      };
+    } catch (txtErr) {
+      console.error(`${logPrefix} Darkroom txt error for ${dancer.lastName}, ${dancer.firstName}: ${txtErr.message}`);
+      return { txtFilePath: null, txtFilename: null, slipFilePath: packingSlipPath, dancerNum };
+    }
+  }
+
+  /**
+   * Reprint a single dancer's order (or one item from it) from a bulk order.
+   *
+   * Always pulls fresh asset URLs from PhotoDay so the lab gets whatever is
+   * currently uploaded — this is the whole point of a reprint, since the
+   * studio is typically reprinting because something was fixed/replaced.
+   *
+   * Reprints write artifacts (images, imposed JPGs, slip, txt) into today's
+   * date folder via fileService.getOrderDir, so they never collide with the
+   * original batch's outputs and Darkroom picks them up as a fresh batch.
+   *
+   * @param {string} orderNum   - Parent bulk order number
+   * @param {string} dancerKey  - From bulkOrderService.makeDancerKey
+   * @param {object} [options]
+   * @param {string} [options.itemId]            - If set, reprint only this one item (no slip)
+   * @param {string} [options.userDownloadPath]  - Per-user override (from auth profile)
+   * @returns {Promise<object>} reprint summary
+   */
+  async reprintBulkDancer(orderNum, dancerKey, options = {}) {
+    const localOrder = await orderDatabase.getOrder(orderNum);
+    if (!localOrder) throw new Error(`Order ${orderNum} not found`);
+    if (!localOrder.orderData?.isBulkOrder) {
+      throw new Error(`Order ${orderNum} is not a bulk order`);
+    }
+
+    // ─── 1. Fresh order data from PhotoDay ─────────────────────────────
+    // Reprints exist because something needs fixing/replacing — always pull
+    // the newest URLs and item data, never serve from stale local cache.
+    let order = localOrder.orderData;
+    try {
+      console.log(`[Reprint-Bulk] Fetching fresh order data from PhotoDay for ${orderNum}...`);
+      const freshOrders = await photodayService.getOrders();
+      const freshOrder = freshOrders.find(o => o.num === orderNum);
+      if (freshOrder) {
+        await orderDatabase.saveOrder(freshOrder, localOrder.status);
+        order = freshOrder;
+        console.log(`[Reprint-Bulk] Updated stored data with fresh URLs`);
+      } else {
+        console.warn(`[Reprint-Bulk] ${orderNum} not in PhotoDay's queue — using stored data (URLs may have expired)`);
+      }
+    } catch (fetchErr) {
+      console.warn(`[Reprint-Bulk] Could not fetch from PhotoDay: ${fetchErr.message} — using stored data`);
+    }
+
+    // ─── 2. Find the dancer ────────────────────────────────────────────
+    const dancer = bulkOrderService.getDancerByKey(order, dancerKey);
+    if (!dancer) {
+      throw new Error(`Dancer "${dancerKey}" not found in order ${orderNum}`);
+    }
+
+    // If a specific item was requested, validate it belongs to this dancer
+    if (options.itemId) {
+      const owned = dancer.items.some(i => i.id === options.itemId);
+      if (!owned) {
+        throw new Error(`Item ${options.itemId} does not belong to dancer ${dancer.lastName}, ${dancer.firstName}`);
+      }
+    }
+
+    // ─── 3. Resolve target dir ──────────────────────────────────────────
+    // Reprints go into today's date folder, not the original batch's folder.
+    // Honors userDownloadPath the same way as initial processing.
+    const subOrder = bulkOrderService.buildSubOrder(order, dancer, { itemId: options.itemId });
+    const orderDir = await fileService.getOrderDir(subOrder, {
+      downloadPath: options.userDownloadPath || null,
+    });
+    await fs.ensureDir(orderDir);
+    console.log(`[Reprint-Bulk] Output dir: ${orderDir}`);
+
+    // ─── 4. Download fresh images for just this dancer's items ─────────
+    // Pass the synthetic sub-order so we don't redownload all 408 items.
+    // _downloadWithRefresh handles the URL-refresh retry loop too.
+    const dlOptions = {
+      downloadPath: options.userDownloadPath || null,
+      forceRedownload: true,
+    };
+    const dl = await this._downloadWithRefresh(subOrder, dlOptions, localOrder.status);
+    if (dl.downloadResult.errorCount > 0) {
+      throw new Error(`Failed to download ${dl.downloadResult.errorCount} of ${dl.downloadResult.totalImages} images for reprint`);
+    }
+    // _downloadWithRefresh may give us back a refreshed full order; re-derive
+    // the dancer/sub-order from that so we're working with the freshest data.
+    const finalOrder = dl.freshOrder || order;
+    const finalDancer = bulkOrderService.getDancerByKey(finalOrder, dancerKey) || dancer;
+
+    // ─── 5. Re-impose this dancer's items ───────────────────────────────
+    const subOrderForImposition = bulkOrderService.buildSubOrder(finalOrder, finalDancer, { itemId: options.itemId });
+    try {
+      const impResults = await impositionService.processOrder(subOrderForImposition, dl.downloadResult.orderDir || orderDir);
+      const imposedCount = impResults.filter(r => r.imposed).length;
+      console.log(`[Reprint-Bulk] Imposition: ${imposedCount} item(s) composed`);
+    } catch (impErr) {
+      console.error(`[Reprint-Bulk] Imposition error: ${impErr.message}`);
+    }
+
+    // ─── 6. Slip + Darkroom txt via shared helper ───────────────────────
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const slipPosition = await this._resolveSlipPosition(finalOrder.gallery);
+    const result = await this._processOneDancer(finalOrder, finalDancer, {
+      orderDir: dl.downloadResult.orderDir || orderDir,
+      slipPosition,
+      batchFilenamePrefix: `REPRINT_${ts}`,
+      skipSlip: !!options.itemId, // single-item reprints get no slip (matches existing /reprint-item behavior)
+      itemId: options.itemId || null,
+      logPrefix: '[Reprint-Bulk]',
+    });
+
+    return {
+      orderNum,
+      dancerKey,
+      dancerNum: finalDancer.dancerNum,
+      dancerName: `${finalDancer.lastName}, ${finalDancer.firstName}`,
+      mode: options.itemId ? 'reprint-item' : 'reprint-dancer',
+      itemId: options.itemId || null,
+      txtFile: result.txtFilename,
+      txtFilePath: result.txtFilePath,
+      slipFilePath: result.slipFilePath,
+      orderDir: dl.downloadResult.orderDir || orderDir,
+    };
+  }
+
 }
 
 module.exports = new SchedulerService();

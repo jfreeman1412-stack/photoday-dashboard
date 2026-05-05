@@ -562,17 +562,47 @@ class ImpositionService {
     const dest = order.shipping?.destination || {};
     const recipientParts = (dest.recipient || '').split(' ');
     const tags = item.photoTags || [];
+
+    // Default values from order-level data (dropship behavior)
+    let firstName = recipientParts[0] || '';
+    let lastName = recipientParts.slice(1).join(' ') || '';
+    let orderNum = order.num;
+    let team = tags[0] || '';
+
+    // For Bulk orders, prefer the item's group fields (athlete name, athlete order
+    // num, team). Each item belongs to a specific dancer/athlete (groupId), and
+    // `recipient` is the studio shipment recipient — not the right person to put
+    // on per-print overlays.
+    if (order.isBulkOrder) {
+      try {
+        const photodayService = require('./photodayService');
+        const group = photodayService.getGroupForItem(order, item);
+        if (group) {
+          const gn = photodayService.getGroupCustomerName(group);
+          if (gn.firstName) firstName = gn.firstName;
+          if (gn.lastName) lastName = gn.lastName;
+          const gOrderNum = photodayService.getGroupOrderNum(group);
+          if (gOrderNum) orderNum = gOrderNum;
+          const gTeam = photodayService.getGroupTeam(group);
+          if (gTeam) team = gTeam;
+        }
+      } catch (err) {
+        // If photodayService import fails for any reason, fall through to order-level defaults
+        console.error('[Imposition] Group context lookup error:', err.message);
+      }
+    }
+
     return {
-      orderNum: order.num,
+      orderNum,
       orderId: order.id,
       gallery: order.gallery || '',
       studioName: order.studio?.name || '',
-      firstName: recipientParts[0] || '',
-      lastName: recipientParts.slice(1).join(' ') || '',
+      firstName,
+      lastName,
       itemDescription: item.description || '',
       itemSku: item.externalId || '',
       quantity: item.quantity || 1,
-      photoTag: tags[0] || '',
+      photoTag: team,
       photoTags: tags.join(', '),
     };
   }

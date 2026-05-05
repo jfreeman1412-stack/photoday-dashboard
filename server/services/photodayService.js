@@ -196,6 +196,47 @@ class PhotoDayService {
   getStudioEmail(order) {
     return order.studio?.email || '';
   }
+
+  /**
+   * Find the group object for an item by groupId. Returns null if not found
+   * or if the order has no groups (typical dropship orders).
+   *
+   * Note: item.groupId matches group.id in PhotoDay's bulk order structure.
+   */
+  getGroupForItem(order, item) {
+    if (!order?.groups || order.groups.length === 0) return null;
+    if (item?.groupId == null) return null;
+    return order.groups.find(g => g.id === item.groupId) || null;
+  }
+
+  /**
+   * Extract the customer name (athlete name in Bulk context) from a group's fields.
+   */
+  getGroupCustomerName(group) {
+    if (!group) return { firstName: '', lastName: '' };
+    const fields = group.fields || [];
+    return {
+      firstName: fields.find(f => f.key === 'first_name')?.value || '',
+      lastName: fields.find(f => f.key === 'last_name')?.value || '',
+    };
+  }
+
+  /**
+   * Get the customer-side order number from a group's fields (e.g., "MD1777059816"
+   * — the dancer's own purchase reference, distinct from the parent bulk order's num).
+   */
+  getGroupOrderNum(group) {
+    if (!group) return '';
+    return (group.fields || []).find(f => f.key === 'num')?.value || '';
+  }
+
+  /**
+   * Get the team from a group's fields (Bulk orders that capture team data, like dance studios).
+   */
+  getGroupTeam(group) {
+    if (!group) return '';
+    return (group.fields || []).find(f => f.key === 'team')?.value || '';
+  }
 }
 
 module.exports = new PhotoDayService();

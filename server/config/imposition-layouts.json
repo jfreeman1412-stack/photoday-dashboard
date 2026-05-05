@@ -38,10 +38,10 @@
         }
       ],
       "colGap": 0.0005,
-      "rowGap": 1,
+      "rowGap": 0.9,
       "centerOnSheet": false,
       "marginLeft": 0,
-      "marginTop": 0
+      "marginTop": 0.1
     },
     {
       "id": "6d7a67e0-194e-4549-9e60-22fcac3e0a95",
@@ -341,8 +341,8 @@
       "marginTop": 0,
       "textOverlays": [
         {
-          "text": "{first_name} {last_name} \\nTeam: {team}\\n Order: {order_id}",
-          "x": 7,
+          "text": "{first_name} {last_name} \\nTeam: {team} Order: {order_id}",
+          "x": 6.9,
           "y": 5,
           "fontSize": 10,
           "color": "#000000",
@@ -477,6 +477,52 @@
           "rotation": -90
         }
       ]
+    },
+    {
+      "id": "788c65e0-84c4-4aae-85cb-d20eca25f7b8",
+      "name": "Horizontal 8 Wallets",
+      "cols": 2,
+      "rows": 4,
+      "itemWidth": 3.5,
+      "itemHeight": 2.5,
+      "sheetWidth": 8,
+      "sheetHeight": 10,
+      "dpi": 300,
+      "colGap": 0,
+      "rowGap": 0,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0,
+      "textOverlays": []
+    },
+    {
+      "id": "0b8b8ddf-db96-405c-bdf5-f911c2f61041",
+      "name": "2 Magnets - Horizontal",
+      "cols": 1,
+      "rows": 2,
+      "itemWidth": 5,
+      "itemHeight": 3.5,
+      "sheetWidth": 5,
+      "sheetHeight": 8,
+      "dpi": 300,
+      "colGap": 0.01,
+      "rowGap": 0.8,
+      "centerOnSheet": false,
+      "marginLeft": 0,
+      "marginTop": 0.1,
+      "textOverlays": [
+        {
+          "text": "{first_name} {last_name} Order: {order_id}\\n {gallery} - {team} - {photo_tags}",
+          "x": 0,
+          "y": 3.6,
+          "fontSize": 10,
+          "color": "#000000",
+          "autoSize": true,
+          "centerAlign": true,
+          "width": 5,
+          "height": 0.8
+        }
+      ]
     }
   ],
   "mappings": [
@@ -494,7 +540,8 @@
     },
     {
       "externalId": "15",
-      "layoutId": "6f45a0e3-0a27-4a1e-a8e6-78d9e91fa886"
+      "layoutId": "6f45a0e3-0a27-4a1e-a8e6-78d9e91fa886",
+      "orientation": "vertical"
     },
     {
       "externalId": "32",
@@ -555,6 +602,16 @@
       "externalId": "8",
       "layoutId": "5cd15528-b2ef-4243-90ff-9927d8618718",
       "orientation": "vertical"
+    },
+    {
+      "externalId": "12",
+      "layoutId": "788c65e0-84c4-4aae-85cb-d20eca25f7b8",
+      "orientation": "horizontal"
+    },
+    {
+      "externalId": "15",
+      "layoutId": "0b8b8ddf-db96-405c-bdf5-f911c2f61041",
+      "orientation": "horizontal"
     }
   ]
 }

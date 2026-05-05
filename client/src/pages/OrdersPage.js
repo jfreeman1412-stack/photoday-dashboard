@@ -51,6 +51,15 @@ export default function OrdersPage() {
   // Process results
   const [processResults, setProcessResults] = useState(null);
 
+  // Bulk-order expansion: which order rows are expanded to show dancer breakdown
+  const [expandedBulkOrders, setExpandedBulkOrders] = useState(() => new Set());
+  // Cached dancer data per orderNum: { dancers, totalDancers, totalItems }
+  const [dancersByOrder, setDancersByOrder] = useState({});
+  // Per-order loading flag while fetching the dancer list
+  const [dancersLoading, setDancersLoading] = useState(() => new Set());
+  // Per-action loading key (`${orderNum}|${dancerKey}|${itemId||''}`)
+  const [dancerActionLoading, setDancerActionLoading] = useState(null);
+
   // Ship form
   const [shipOrderNum, setShipOrderNum] = useState('');
   const [shipTrackingNum, setShipTrackingNum] = useState('');
@@ -206,6 +215,59 @@ export default function OrdersPage() {
   };
 
   // ─── Process Orders ─────────────────────────────────────
+  // ─── Bulk-order dancer expansion ────────────────────────
+  // Lazy-load dancer breakdown the first time a bulk row is expanded; cache
+  // it so subsequent expansions are instant.
+  const toggleBulkExpand = async (orderNum) => {
+    setExpandedBulkOrders(prev => {
+      const next = new Set(prev);
+      if (next.has(orderNum)) next.delete(orderNum); else next.add(orderNum);
+      return next;
+    });
+    // Load on first expand
+    if (!expandedBulkOrders.has(orderNum) && !dancersByOrder[orderNum]) {
+      setDancersLoading(prev => { const n = new Set(prev); n.add(orderNum); return n; });
+      try {
+        const result = await api.getBulkDancers(orderNum);
+        setDancersByOrder(prev => ({ ...prev, [orderNum]: result }));
+      } catch (err) {
+        setError(`Could not load dancers for ${orderNum}: ${err.message}`);
+      } finally {
+        setDancersLoading(prev => { const n = new Set(prev); n.delete(orderNum); return n; });
+      }
+    }
+  };
+
+  // Reprint an entire dancer's order (slip + all items, fresh from PhotoDay)
+  const reprintWholeDancer = async (orderNum, dancerKey, dancerName) => {
+    const key = `${orderNum}|${dancerKey}|`;
+    clearMessages();
+    setDancerActionLoading(key);
+    try {
+      const result = await api.reprintBulkDancer(orderNum, dancerKey);
+      setSuccess(`Reprinted ${dancerName}: ${result.txtFile || 'done'}`);
+    } catch (err) {
+      setError(`Reprint failed for ${dancerName}: ${err.message}`);
+    } finally {
+      setDancerActionLoading(null);
+    }
+  };
+
+  // Reprint a single item for a dancer (no slip — matches existing reprint-item behavior)
+  const reprintSingleItemForDancer = async (orderNum, dancerKey, itemId, itemDesc, dancerName) => {
+    const key = `${orderNum}|${dancerKey}|${itemId}`;
+    clearMessages();
+    setDancerActionLoading(key);
+    try {
+      const result = await api.reprintBulkDancerItem(orderNum, dancerKey, itemId);
+      setSuccess(`Reprinted ${itemDesc} for ${dancerName}: ${result.txtFile || 'done'}`);
+    } catch (err) {
+      setError(`Reprint failed: ${err.message}`);
+    } finally {
+      setDancerActionLoading(null);
+    }
+  };
+
   const processSingle = async (orderNum) => {
     clearMessages();
     setLoading(true);
@@ -376,8 +438,22 @@ export default function OrdersPage() {
           </thead>
           <tbody>
             {orders.map((order) => (
-              <tr key={order.orderNum}>
+              <React.Fragment key={order.orderNum}>
+              <tr>
                 <td className="mono" style={{ fontWeight: 600 }}>
+                  {order.isBulk && (
+                    <button
+                      onClick={() => toggleBulkExpand(order.orderNum)}
+                      title={expandedBulkOrders.has(order.orderNum) ? 'Collapse dancers' : 'Show dancers'}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0 4px 0 0', color: 'var(--text-secondary)',
+                        fontSize: 11, fontFamily: 'monospace',
+                      }}
+                    >
+                      {expandedBulkOrders.has(order.orderNum) ? '▾' : '▸'}
+                    </button>
+                  )}
                   <a
                     href={`https://pdx.photoday.com/${order.isBulk ? 'orders-bulk' : 'orders'}/${order.orderId}/info`}
                     target="_blank"
@@ -542,6 +618,100 @@ export default function OrdersPage() {
                   </div>
                 </td>
               </tr>
+              {order.isBulk && expandedBulkOrders.has(order.orderNum) && (() => {
+                // Compute colspan to match this tab's header layout. Base = 7
+                // (Order#, Gallery, Name, Items, Type, Placed, Actions); plus any
+                // status-specific columns rendered in this view.
+                let cols = 7;
+                if (status === 'search') cols += 1;
+                else if (status === 'processed') cols += 2;
+                else if (status === 'shipped') cols += 3;
+                const cached = dancersByOrder[order.orderNum];
+                const isLoading = dancersLoading.has(order.orderNum);
+                const dancerName = (d) => `${d.lastName}, ${d.firstName}`;
+                return (
+                  <tr key={`${order.orderNum}-dancers`} style={{ background: 'var(--bg-input)' }}>
+                    <td colSpan={cols} style={{ padding: '12px 16px' }}>
+                      {isLoading && (
+                        <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading dancers…</div>
+                      )}
+                      {!isLoading && !cached && (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Click to load dancers.</div>
+                      )}
+                      {!isLoading && cached && cached.dancers.length === 0 && (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No dancers found in this bulk order.</div>
+                      )}
+                      {!isLoading && cached && cached.dancers.length > 0 && (
+                        <div>
+                          <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                            {cached.totalDancers} dancer{cached.totalDancers === 1 ? '' : 's'} · {cached.totalItems} item{cached.totalItems === 1 ? '' : 's'}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {cached.dancers.map((d) => {
+                              const wholeKey = `${order.orderNum}|${d.dancerKey}|`;
+                              const isReprintingWhole = dancerActionLoading === wholeKey;
+                              return (
+                                <div key={d.dancerKey} style={{
+                                  display: 'flex', alignItems: 'flex-start', gap: 12,
+                                  padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+                                  background: 'var(--bg-card)', border: '1px solid var(--border-light)',
+                                }}>
+                                  <div style={{ minWidth: 36, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                                    #{d.dancerNum}
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                                      {dancerName(d)}
+                                      {d.customerOrderNums.length > 0 && (
+                                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', fontWeight: 400 }}>
+                                          {d.customerOrderNums.join(', ')}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                      {d.items.map((it) => {
+                                        const itemKey = `${order.orderNum}|${d.dancerKey}|${it.id}`;
+                                        const isReprintingItem = dancerActionLoading === itemKey;
+                                        return (
+                                          <div key={it.id} style={{
+                                            display: 'flex', alignItems: 'center', gap: 6,
+                                            fontSize: 12, color: 'var(--text-secondary)',
+                                          }}>
+                                            <span>{it.quantity}× {it.description}</span>
+                                            <button
+                                              className="btn btn-sm btn-secondary"
+                                              onClick={() => reprintSingleItemForDancer(order.orderNum, d.dancerKey, it.id, it.description, dancerName(d))}
+                                              disabled={!!dancerActionLoading}
+                                              style={{ padding: '0px 6px', fontSize: 9, lineHeight: '16px', minWidth: 0 }}
+                                              title="Reprint this single item (no packing slip)"
+                                            >
+                                              {isReprintingItem ? '…' : 'Reprint'}
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                  <button
+                                    className="btn btn-sm btn-primary"
+                                    onClick={() => reprintWholeDancer(order.orderNum, d.dancerKey, dancerName(d))}
+                                    disabled={!!dancerActionLoading}
+                                    style={{ alignSelf: 'flex-start' }}
+                                    title="Reprint this dancer's full order with packing slip (re-fetches latest images from PhotoDay)"
+                                  >
+                                    {isReprintingWhole ? 'Reprinting…' : 'Reprint Dancer'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })()}
+              </React.Fragment>
             ))}
           </tbody>
         </table>

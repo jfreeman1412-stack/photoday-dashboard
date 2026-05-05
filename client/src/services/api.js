@@ -130,6 +130,21 @@ class ApiService {
       method: 'POST', body: JSON.stringify({ itemId }),
     });
   }
+
+  // Bulk-order dancer endpoints
+  getBulkDancers(orderNum) {
+    return this._fetch(`/orders/${orderNum}/dancers`);
+  }
+  reprintBulkDancer(orderNum, dancerKey) {
+    return this._fetch(`/orders/${orderNum}/dancers/${encodeURIComponent(dancerKey)}/reprint`, {
+      method: 'POST', body: '{}',
+    });
+  }
+  reprintBulkDancerItem(orderNum, dancerKey, itemId) {
+    return this._fetch(`/orders/${orderNum}/dancers/${encodeURIComponent(dancerKey)}/reprint-item`, {
+      method: 'POST', body: JSON.stringify({ itemId }),
+    });
+  }
   updateOrderData(orderNum, orderData) {
     return this._fetch(`/orders/${orderNum}/update-data`, { method: 'PUT', body: JSON.stringify(orderData) });
   }
