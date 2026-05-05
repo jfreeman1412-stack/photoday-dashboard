@@ -444,14 +444,22 @@ export default function OrdersPage() {
                   {order.isBulk && (
                     <button
                       onClick={() => toggleBulkExpand(order.orderNum)}
-                      title={expandedBulkOrders.has(order.orderNum) ? 'Collapse dancers' : 'Show dancers'}
+                      title={expandedBulkOrders.has(order.orderNum) ? 'Hide orders' : 'Show orders'}
                       style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0 4px 0 0', color: 'var(--text-secondary)',
-                        fontSize: 11, fontFamily: 'monospace',
+                        background: 'rgba(232,140,48,0.15)',
+                        border: '1px solid rgba(232,140,48,0.4)',
+                        borderRadius: 'var(--radius-sm)',
+                        cursor: 'pointer',
+                        padding: '2px 8px',
+                        marginRight: 6,
+                        color: '#e88c30',
+                        fontSize: 14,
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        verticalAlign: 'middle',
                       }}
                     >
-                      {expandedBulkOrders.has(order.orderNum) ? '▾' : '▸'}
+                      {expandedBulkOrders.has(order.orderNum) ? '▾ Orders' : '▸ Orders'}
                     </button>
                   )}
                   <a
@@ -475,36 +483,48 @@ export default function OrdersPage() {
                 <td>{order.customerName || '—'}</td>
                 <td>
                   <div style={{ fontSize: 12 }}>
-                    {(order.items || []).map((item, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', marginBottom: 2 }}>
-                        <span>{item.quantity}x {item.description}</span>
-                        {(item.tags || []).map((tag, ti) => (
-                          <span key={ti} style={{
-                            padding: '0px 5px', borderRadius: 'var(--radius-sm)', fontSize: 9,
-                            background: 'rgba(232,140,48,0.15)', color: '#e88c30', fontWeight: 600,
-                          }}>
-                            {tag}
-                          </span>
-                        ))}
-                        {(status === 'processed' || status === 'shipped') && item.id && (
-                          <button className="btn btn-sm btn-secondary"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              clearMessages(); setLoading(true);
-                              try {
-                                const result = await api.reprintItem(order.orderNum, item.id);
-                                setSuccess(`Reprinted ${item.description}: ${result.txtFile || 'done'}`);
-                              } catch (err) { setError(err.message); }
-                              finally { setLoading(false); }
-                            }}
-                            disabled={loading}
-                            style={{ padding: '0px 4px', fontSize: 9, lineHeight: '16px', minWidth: 0 }}
-                            title="Reprint this item only (download + imposition + txt, no packing slip)">
-                            Reprint
-                          </button>
-                        )}
+                    {order.isBulk ? (
+                      // Bulk: show a compact summary. Per-customer breakdown
+                      // lives in the "▸ Orders" expansion above — listing all
+                      // 400+ items here would just be noise.
+                      <div style={{ color: 'var(--text-secondary)' }}>
+                        {(order.items || []).length} item{(order.items || []).length === 1 ? '' : 's'}
+                        <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
+                          — click <b>▸ Orders</b> to view by customer
+                        </span>
                       </div>
-                    ))}
+                    ) : (
+                      (order.items || []).map((item, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', marginBottom: 2 }}>
+                          <span>{item.quantity}x {item.description}</span>
+                          {(item.tags || []).map((tag, ti) => (
+                            <span key={ti} style={{
+                              padding: '0px 5px', borderRadius: 'var(--radius-sm)', fontSize: 9,
+                              background: 'rgba(232,140,48,0.15)', color: '#e88c30', fontWeight: 600,
+                            }}>
+                              {tag}
+                            </span>
+                          ))}
+                          {(status === 'processed' || status === 'shipped') && item.id && (
+                            <button className="btn btn-sm btn-secondary"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                clearMessages(); setLoading(true);
+                                try {
+                                  const result = await api.reprintItem(order.orderNum, item.id);
+                                  setSuccess(`Reprinted ${item.description}: ${result.txtFile || 'done'}`);
+                                } catch (err) { setError(err.message); }
+                                finally { setLoading(false); }
+                              }}
+                              disabled={loading}
+                              style={{ padding: '0px 4px', fontSize: 9, lineHeight: '16px', minWidth: 0 }}
+                              title="Reprint this item only (download + imposition + txt, no packing slip)">
+                              Reprint
+                            </button>
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
                 </td>
                 <td>
@@ -633,23 +653,28 @@ export default function OrdersPage() {
                   <tr key={`${order.orderNum}-dancers`} style={{ background: 'var(--bg-input)' }}>
                     <td colSpan={cols} style={{ padding: '12px 16px' }}>
                       {isLoading && (
-                        <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading dancers…</div>
+                        <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading orders…</div>
                       )}
                       {!isLoading && !cached && (
-                        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Click to load dancers.</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Click to load orders.</div>
                       )}
                       {!isLoading && cached && cached.dancers.length === 0 && (
-                        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No dancers found in this bulk order.</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No customer orders found in this bulk order.</div>
                       )}
                       {!isLoading && cached && cached.dancers.length > 0 && (
                         <div>
                           <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-                            {cached.totalDancers} dancer{cached.totalDancers === 1 ? '' : 's'} · {cached.totalItems} item{cached.totalItems === 1 ? '' : 's'}
+                            {cached.totalDancers} order{cached.totalDancers === 1 ? '' : 's'} · {cached.totalItems} item{cached.totalItems === 1 ? '' : 's'}
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                             {cached.dancers.map((d) => {
                               const wholeKey = `${order.orderNum}|${d.dancerKey}|`;
                               const isReprintingWhole = dancerActionLoading === wholeKey;
+                              const customerName = `${d.lastName}, ${d.firstName}`;
+                              const primaryOrderNum = d.customerOrderNums[0] || '';
+                              const reprintLabel = primaryOrderNum
+                                ? `${primaryOrderNum} (${customerName})`
+                                : customerName;
                               return (
                                 <div key={d.dancerKey} style={{
                                   display: 'flex', alignItems: 'flex-start', gap: 12,
@@ -660,13 +685,19 @@ export default function OrdersPage() {
                                     #{d.dancerNum}
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
-                                      {dancerName(d)}
-                                      {d.customerOrderNums.length > 0 && (
-                                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', fontWeight: 400 }}>
+                                    <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                      {d.customerOrderNums.length > 0 ? (
+                                        <span style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent)' }}>
                                           {d.customerOrderNums.join(', ')}
                                         </span>
+                                      ) : (
+                                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                          (no customer order #)
+                                        </span>
                                       )}
+                                      <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                                        {customerName}
+                                      </span>
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                       {d.items.map((it) => {
@@ -680,7 +711,7 @@ export default function OrdersPage() {
                                             <span>{it.quantity}× {it.description}</span>
                                             <button
                                               className="btn btn-sm btn-secondary"
-                                              onClick={() => reprintSingleItemForDancer(order.orderNum, d.dancerKey, it.id, it.description, dancerName(d))}
+                                              onClick={() => reprintSingleItemForDancer(order.orderNum, d.dancerKey, it.id, it.description, reprintLabel)}
                                               disabled={!!dancerActionLoading}
                                               style={{ padding: '0px 6px', fontSize: 9, lineHeight: '16px', minWidth: 0 }}
                                               title="Reprint this single item (no packing slip)"
@@ -694,12 +725,12 @@ export default function OrdersPage() {
                                   </div>
                                   <button
                                     className="btn btn-sm btn-primary"
-                                    onClick={() => reprintWholeDancer(order.orderNum, d.dancerKey, dancerName(d))}
+                                    onClick={() => reprintWholeDancer(order.orderNum, d.dancerKey, reprintLabel)}
                                     disabled={!!dancerActionLoading}
                                     style={{ alignSelf: 'flex-start' }}
-                                    title="Reprint this dancer's full order with packing slip (re-fetches latest images from PhotoDay)"
+                                    title="Reprint this customer's full order with packing slip (re-fetches latest images from PhotoDay)"
                                   >
-                                    {isReprintingWhole ? 'Reprinting…' : 'Reprint Dancer'}
+                                    {isReprintingWhole ? 'Reprinting…' : 'Reprint Order'}
                                   </button>
                                 </div>
                               );
