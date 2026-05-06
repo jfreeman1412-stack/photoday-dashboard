@@ -456,8 +456,25 @@ class DarkroomService {
     // ─── Sort: non-5x8 first, then all 5x8 items, with slip placed within 5x8 group ───
     // Darkroom prints sizes in the order their first occurrence appears in the txt,
     // so putting all 5x8 lines at the bottom means the 5x8 group prints last.
-    const non5x8 = rawLineItems.filter(li => li.size !== '5x8');
-    const items5x8 = rawLineItems.filter(li => li.size === '5x8');
+    //
+    // CRITICAL: partition by *physical paper*, not by exact size string. Items
+    // come through as either '5x8' or '8x5' depending on orientation (e.g.,
+    // 5x7 Individual prints as '5x8', 5x7 Standard Group prints as '8x5') —
+    // both go on the same 5x8 paper at the lab. Treating them as different
+    // would let an '8x5' item sneak between the slip and other 5x8 items in
+    // the txt, which produces a misordered print stack at Darkroom even
+    // though the .txt looks "sorted" by string comparison.
+    const is5x8Paper = (sz) => {
+      if (!sz || typeof sz !== 'string') return false;
+      const m = sz.match(/^(\d+)x(\d+)$/);
+      if (!m) return false;
+      const a = parseInt(m[1], 10);
+      const b = parseInt(m[2], 10);
+      // Match either orientation
+      return (a === 5 && b === 8) || (a === 8 && b === 5);
+    };
+    const non5x8 = rawLineItems.filter(li => !is5x8Paper(li.size));
+    const items5x8 = rawLineItems.filter(li => is5x8Paper(li.size));
     const lineItems = [...non5x8];
 
     if (slipLineItem && slipPosition === 'first') {
